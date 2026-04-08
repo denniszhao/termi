@@ -128,3 +128,16 @@ export function routeTunnelDns(
 
   return routeResult.status === 0;
 }
+
+export function deletePersistentTunnel(
+  cloudflaredPath: string,
+  tunnelId: string,
+): boolean {
+  const deleteResult = spawnSync(
+    cloudflaredPath,
+    ["tunnel", "--origincert", certPath(), "delete", "-f", tunnelId],
+    { encoding: "utf-8" },
+  );
+
+  return deleteResult.status === 0;
+}

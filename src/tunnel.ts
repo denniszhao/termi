@@ -22,18 +22,18 @@ export function parseTunnelUrl(line: string): string | null {
   }
 }
 
-export async function waitForTunnelReady(url: string, timeoutMs = 30_000): Promise<void> {
+export async function waitForTunnelReady(url: string, timeoutMs = 30_000): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
       const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(3000) });
-      if (res.ok) return;
+      if (res.ok) return true;
     } catch {
       // DNS not ready yet or connection refused — keep trying
     }
     await new Promise((r) => setTimeout(r, 2000));
   }
-  // Don't throw — the tunnel might still work, DNS might just be slow
+  return false;
 }
 
 function attachTunnelOutput(
@@ -72,7 +72,7 @@ function rejectIfExitedBeforeReady(
     if (!isResolved()) {
       clearTimeoutFn();
       onReject(new Error(`cloudflared exited with code ${code}`));
-    } else {
+    } else if (!proc.killed) {
       console.error(`\n  Warning: cloudflared exited unexpectedly (code ${code})`);
     }
   });
@@ -116,7 +116,12 @@ export function startNamedTunnel(
         resolved = true;
         clearTimeout(timeout);
         const url = `https://${domain}`;
-        waitForTunnelReady(url).then(() => {
+        waitForTunnelReady(url).then((ready) => {
+          if (!ready) {
+            proc.kill("SIGTERM");
+            reject(new Error(`Tunnel connected but ${domain} did not become reachable within 30s`));
+            return;
+          }
           resolve(createTunnelHandle(proc, url));
         });
       }

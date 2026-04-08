@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseTunnelUrl } from "../src/tunnel.ts";
+import { parseTunnelUrl, waitForTunnelReady } from "../src/tunnel.ts";
 
 test("parseTunnelUrl extracts a trycloudflare URL from JSON log output", () => {
   const line = JSON.stringify({
@@ -18,3 +18,17 @@ test("parseTunnelUrl returns null when no URL is present", () => {
   assert.equal(parseTunnelUrl("no tunnel url here"), null);
 });
 
+test("waitForTunnelReady returns true when the health check succeeds", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response("ok", { status: 200 });
+
+  try {
+    assert.equal(await waitForTunnelReady("https://example.com", 10), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("waitForTunnelReady returns false when the timeout expires", async () => {
+  assert.equal(await waitForTunnelReady("https://example.com", 0), false);
+});

@@ -24,11 +24,13 @@ import {
 import type { TermiSavedConfig } from "./types.js";
 import {
   createPersistentTunnel,
+  deletePersistentTunnel,
   ensureCloudflareAuth,
   fetchCloudflareDomains,
   parseCertToken,
   routeTunnelDns,
 } from "./cloudflare.js";
+import { waitForTunnelReady } from "./tunnel.js";
 
 function handleCancel<T>(value: T): asserts value is Exclude<T, symbol> {
   if (isCancel(value)) {
@@ -173,10 +175,32 @@ async function setupPersistentTunnel(cloudflaredPath: string): Promise<TermiSave
   const s3 = spinner();
   s3.start(`Setting up DNS for ${fullDomain}...`);
   if (!routeTunnelDns(cloudflaredPath, tunnelId, fullDomain)) {
-    s3.stop("Warning: DNS routing may have failed.");
+    s3.stop("Failed.");
+    const cleanedUp = deletePersistentTunnel(cloudflaredPath, tunnelId);
+    cancel(
+      cleanedUp
+        ? `Failed to set up DNS for ${fullDomain}. The newly created tunnel was removed.`
+        : `Failed to set up DNS for ${fullDomain}. The created tunnel (${tunnelId}) may need manual cleanup.`,
+    );
+    process.exit(1);
   } else {
     s3.stop(`DNS ready: ${fullDomain}`);
   }
+
+  const s4 = spinner();
+  s4.start(`Verifying ${fullDomain}...`);
+  const ready = await waitForTunnelReady(`https://${fullDomain}`);
+  if (!ready) {
+    s4.stop("Failed.");
+    const cleanedUp = deletePersistentTunnel(cloudflaredPath, tunnelId);
+    cancel(
+      cleanedUp
+        ? `DNS was created, but ${fullDomain} did not become reachable within 30s. The new tunnel was removed and no config was saved.`
+        : `DNS was created, but ${fullDomain} did not become reachable within 30s. The created tunnel (${tunnelId}) may need manual cleanup.`,
+    );
+    process.exit(1);
+  }
+  s4.stop(`${fullDomain} is reachable.`);
 
   const config: TermiSavedConfig = {
     tunnel: {
