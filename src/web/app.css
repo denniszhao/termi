@@ -99,39 +99,6 @@ html, body {
   gap: 2px;
 }
 
-.kb-bottom-wrap {
-  display: flex;
-  gap: 3px;
-}
-
-.kb-bottom-left {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.kb-enter {
-  width: 48px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: -apple-system, system-ui, monospace;
-  font-size: 18px;
-  color: #fff;
-  background: #2563eb;
-  border: none;
-  border-radius: 5px;
-  -webkit-tap-highlight-color: transparent;
-  touch-action: manipulation;
-  cursor: pointer;
-  user-select: none;
-}
-
-.kb-enter:active {
-  background: #1d4ed8;
-}
-
 .kb-key {
   flex: 1;
   height: 42px;
@@ -182,7 +149,19 @@ html, body {
 }
 
 .kb-key.space {
-  flex: 4;
+  flex: 3.2;
+}
+
+.kb-key.enter {
+  flex: 1.35;
+  font-size: 18px;
+  color: #fff;
+  background: #2563eb;
+}
+
+.kb-key.enter:active,
+.kb-key.enter.pressed {
+  background: #1d4ed8;
 }
 
 .kb-key.action {

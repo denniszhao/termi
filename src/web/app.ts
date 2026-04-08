@@ -11,6 +11,7 @@ interface ModifierKey {
   mod?: boolean;
   wide?: boolean;
   space?: boolean;
+  enter?: boolean;
 }
 
 type KeyboardKey = string | ModifierKey;
@@ -88,6 +89,7 @@ const LETTERS_BOTTOM_ROW: KeyboardKey[] = [
   "-",
   { id: "space", label: " ", space: true },
   ".",
+  { id: "enter", label: "\u21b5", enter: true },
 ];
 
 const NUMBERS_TOP: string[][] = [
@@ -111,6 +113,7 @@ const NUMBERS_BOTTOM_ROW: KeyboardKey[] = [
   "~",
   { id: "space", label: " ", space: true },
   ":",
+  { id: "enter", label: "\u21b5", enter: true },
 ];
 
 const SYMBOLS_TOP: string[][] = [
@@ -134,6 +137,7 @@ const SYMBOLS_BOTTOM_ROW: KeyboardKey[] = [
   "~",
   { id: "space", label: " ", space: true },
   ".",
+  { id: "enter", label: "\u21b5", enter: true },
 ];
 
 const ACTION_ROW: ModifierKey[] = [
@@ -183,6 +187,7 @@ function renderKey(key: KeyboardKey): string {
   if (key.mod) className += " mod";
   if (key.wide) className += " wide";
   if (key.space) className += " space";
+  if (key.enter) className += " enter";
   if (key.id === "shift" && shiftState !== "off") className += " active";
   return `<div class="${className}" data-id="${key.id}">${key.label}</div>`;
 }
@@ -205,7 +210,6 @@ function renderKeyboard(): void {
     html += "</div>";
   }
 
-  html += '<div class="kb-bottom-wrap"><div class="kb-bottom-left">';
   html += '<div class="kb-row">';
   for (const key of layout.shift) {
     html += renderKey(key);
@@ -216,7 +220,7 @@ function renderKeyboard(): void {
   for (const key of layout.bottom) {
     html += renderKey(key);
   }
-  html += '</div></div><div class="kb-enter" data-id="enter">\u21b5</div></div>';
+  html += "</div>";
 
   keyboardEl.innerHTML = html;
 }
