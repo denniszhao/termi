@@ -1,5 +1,5 @@
 import http from "node:http";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
@@ -13,6 +13,22 @@ const HISTORY_LIMIT_BYTES = 512 * 1024;
 const CLIENT_BUFFER_LIMIT_BYTES = 1024 * 1024;
 const FLUSH_INTERVAL_MS = 16;
 
+function resolvePublicDir(): string {
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    join(moduleDir, "public"),
+    join(process.cwd(), "dist", "public"),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(join(candidate, "app.js")) && existsSync(join(candidate, "app.css"))) {
+      return candidate;
+    }
+  }
+
+  throw new Error("Could not locate built web assets");
+}
+
 export interface ServerHandle {
   port: number;
   close(): void;
@@ -24,7 +40,7 @@ export function startServer(
   port: number,
 ): Promise<ServerHandle> {
   const html = getHtml();
-  const publicDir = join(dirname(fileURLToPath(import.meta.url)), "public");
+  const publicDir = resolvePublicDir();
   const appJs = readFileSync(join(publicDir, "app.js"));
   const appCss = readFileSync(join(publicDir, "app.css"));
   const clients = new Set<WebSocket>();

@@ -37,7 +37,9 @@
     "build": "node build.mjs",
     "dev": "node build.mjs --watch",
     "start": "node dist/cli.mjs start",
-    "check": "npm run build && node dist/cli.mjs --help && node dist/cli.mjs --version"
+    "check": "npm run build && node dist/cli.mjs --help && node dist/cli.mjs --version",
+    "test": "npm run build && node --import tsx --test test/auth.test.ts test/cloudflare.test.ts test/config.test.ts test/tunnel.test.ts",
+    "test:server": "npm run build && TERMI_RUN_SERVER_TESTS=1 node --import tsx --test test/server.test.ts"
   },
   "dependencies": {
     "@clack/prompts": "^0.9",
@@ -52,6 +54,7 @@
     "@types/node": "^22",
     "@types/ws": "^8",
     "esbuild": "^0.25",
+    "tsx": "^4.21.0",
     "typescript": "^5.7"
   }
 }
