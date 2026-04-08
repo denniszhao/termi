@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import * as childProcess from "node:child_process";
 import { createInterface } from "node:readline";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -37,7 +37,7 @@ export async function waitForTunnelReady(url: string, timeoutMs = 30_000): Promi
 }
 
 function attachTunnelOutput(
-  proc: ReturnType<typeof spawn>,
+  proc: ReturnType<typeof childProcess.spawn>,
   onLine: (line: string) => void,
 ): void {
   if (proc.stdout) {
@@ -48,7 +48,7 @@ function attachTunnelOutput(
   }
 }
 
-function createTunnelHandle(proc: ReturnType<typeof spawn>, url: string): TunnelHandle {
+function createTunnelHandle(proc: ReturnType<typeof childProcess.spawn>, url: string): TunnelHandle {
   return {
     url,
     kill: () => proc.kill("SIGTERM"),
@@ -56,7 +56,7 @@ function createTunnelHandle(proc: ReturnType<typeof spawn>, url: string): Tunnel
 }
 
 function rejectIfExitedBeforeReady(
-  proc: ReturnType<typeof spawn>,
+  proc: ReturnType<typeof childProcess.spawn>,
   onReject: (err: Error) => void,
   isResolved: () => boolean,
   clearTimeoutFn: () => void,
@@ -97,13 +97,20 @@ export function startNamedTunnel(
   ].join("\n") + "\n";
   writeSecureFile(cfgPath, yml);
 
-  return new Promise((resolve, reject) => {
-    const proc = spawn(
-      cloudflaredPath,
-      ["tunnel", "--no-autoupdate", "--config", cfgPath, "run"],
-      { stdio: ["ignore", "pipe", "pipe"] },
-    );
+  const proc = childProcess.spawn(
+    cloudflaredPath,
+    ["tunnel", "--no-autoupdate", "--config", cfgPath, "run"],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
 
+  return waitForNamedTunnelConnection(proc, domain);
+}
+
+export function waitForNamedTunnelConnection(
+  proc: ReturnType<typeof childProcess.spawn>,
+  domain: string,
+): Promise<TunnelHandle> {
+  return new Promise((resolve, reject) => {
     let resolved = false;
     const timeout = setTimeout(() => {
       proc.kill("SIGTERM");
@@ -112,19 +119,17 @@ export function startNamedTunnel(
 
     function handleLine(line: string) {
       if (resolved) return;
-      if (line.includes("Registered tunnel connection")) {
-        resolved = true;
-        clearTimeout(timeout);
-        const url = `https://${domain}`;
-        waitForTunnelReady(url).then((ready) => {
-          if (!ready) {
-            proc.kill("SIGTERM");
-            reject(new Error(`Tunnel connected but ${domain} did not become reachable within 30s`));
-            return;
-          }
-          resolve(createTunnelHandle(proc, url));
-        });
+      if (!line.includes("Registered tunnel connection")) {
+        return;
       }
+
+      resolved = true;
+      clearTimeout(timeout);
+
+      // For persistent tunnels, Cloudflare DNS propagation can lag behind the
+      // tunnel registration event. Once the tunnel is connected, let the
+      // session continue instead of failing setup on a transient public check.
+      resolve(createTunnelHandle(proc, `https://${domain}`));
     }
 
     attachTunnelOutput(proc, handleLine);
@@ -143,7 +148,7 @@ export function startTunnel(
     rmSync(tmpConfig, { force: true });
     writeSecureFile(tmpConfig, "# termi quick tunnel\n");
 
-    const proc = spawn(
+    const proc = childProcess.spawn(
       cloudflaredPath,
       ["tunnel", "--no-autoupdate", "--config", tmpConfig, "--url", `http://127.0.0.1:${localPort}`],
       { stdio: ["ignore", "pipe", "pipe"] },
