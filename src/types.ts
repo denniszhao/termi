@@ -2,7 +2,14 @@ export interface TermiConfig {
   mode: "tunnel" | "persistent";
   port: number;
   shell: string;
-  token: string;
+  token?: string;
+}
+
+export interface TrustedDevice {
+  id: string;
+  secretHash: string;
+  createdAt: string;
+  lastSeenAt: string;
 }
 
 export interface TermiSavedConfig {
@@ -11,6 +18,7 @@ export interface TermiSavedConfig {
     name: string;
     domain: string;
   };
+  trustedDevices: TrustedDevice[];
 }
 
 export interface WsClientMessage {

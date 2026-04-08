@@ -26,6 +26,7 @@ test("config persists and resets saved state under the home directory", async ()
       name: "termi-123",
       domain: "termi-123.example.com",
     },
+    trustedDevices: [],
   };
 
   config.saveConfig(saved);
@@ -41,3 +42,37 @@ test("config persists and resets saved state under the home directory", async ()
   assert.equal(existsSync(configPath), false);
 });
 
+test("trusted device helpers remove one device or clear them all", async () => {
+  const tempHome = mkdtempSync(join(tmpdir(), "termi-home-"));
+  const config = await importFreshConfigModule(tempHome);
+
+  const deviceA = {
+    id: "device-a",
+    secretHash: "hash-a",
+    createdAt: "2026-04-08T10:00:00.000Z",
+    lastSeenAt: "2026-04-08T10:05:00.000Z",
+  };
+  const deviceB = {
+    id: "device-b",
+    secretHash: "hash-b",
+    createdAt: "2026-04-08T11:00:00.000Z",
+    lastSeenAt: "2026-04-08T11:05:00.000Z",
+  };
+
+  config.saveConfig({
+    tunnel: {
+      id: "tunnel-id",
+      name: "termi-123",
+      domain: "termi-123.example.com",
+    },
+    trustedDevices: [deviceA, deviceB],
+  });
+
+  assert.deepEqual(config.listTrustedDevices(), [deviceA, deviceB]);
+  assert.equal(config.removeTrustedDevice("missing"), false);
+  assert.equal(config.removeTrustedDevice("device-a"), true);
+  assert.deepEqual(config.listTrustedDevices(), [deviceB]);
+  assert.equal(config.clearTrustedDevices(), 1);
+  assert.deepEqual(config.listTrustedDevices(), []);
+  assert.equal(config.clearTrustedDevices(), 0);
+});

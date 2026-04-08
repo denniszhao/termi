@@ -28,3 +28,9 @@ export function printSessionInfo(url: string, mode: string): void {
     console.log("");
   });
 }
+
+export function printPairingCode(code: string): void {
+  console.log(`  ${chalk.yellow("Pairing code:")} ${chalk.bold(code)}`);
+  console.log(chalk.dim("  Enter this on your phone to trust a new browser."));
+  console.log("");
+}

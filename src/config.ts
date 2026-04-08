@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import type { TermiSavedConfig } from "./types.js";
+import type { TermiSavedConfig, TrustedDevice } from "./types.js";
 
 const CONFIG_DIR = join(homedir(), ".termi");
 const CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -31,14 +31,54 @@ export function configDir(): string {
 export function loadConfig(): TermiSavedConfig | null {
   try {
     const raw = readFileSync(CONFIG_PATH, "utf-8");
-    return JSON.parse(raw);
+    return normalizeConfig(JSON.parse(raw));
   } catch {
     return null;
   }
 }
 
 export function saveConfig(config: TermiSavedConfig): void {
-  writeSecureFile(CONFIG_PATH, JSON.stringify(config, null, 2) + "\n");
+  writeSecureFile(CONFIG_PATH, JSON.stringify(normalizeConfig(config), null, 2) + "\n");
+}
+
+export function listTrustedDevices(): TrustedDevice[] {
+  return loadConfig()?.trustedDevices ?? [];
+}
+
+export function removeTrustedDevice(deviceId: string): boolean {
+  const config = loadConfig();
+  if (!config) {
+    return false;
+  }
+
+  const nextTrustedDevices = config.trustedDevices.filter((device) => device.id !== deviceId);
+  if (nextTrustedDevices.length === config.trustedDevices.length) {
+    return false;
+  }
+
+  saveConfig({
+    ...config,
+    trustedDevices: nextTrustedDevices,
+  });
+  return true;
+}
+
+export function clearTrustedDevices(): number {
+  const config = loadConfig();
+  if (!config) {
+    return 0;
+  }
+
+  const count = config.trustedDevices.length;
+  if (count === 0) {
+    return 0;
+  }
+
+  saveConfig({
+    ...config,
+    trustedDevices: [],
+  });
+  return count;
 }
 
 export function resetPersistentState(): void {
@@ -78,4 +118,39 @@ export function certPath(): string {
 
 export function credentialsPath(): string {
   return join(CONFIG_DIR, "credentials.json");
+}
+
+function normalizeConfig(config: Partial<TermiSavedConfig>): TermiSavedConfig {
+  return {
+    tunnel: {
+      id: String(config.tunnel?.id || ""),
+      name: String(config.tunnel?.name || ""),
+      domain: String(config.tunnel?.domain || ""),
+    },
+    trustedDevices: normalizeTrustedDevices(config.trustedDevices),
+  };
+}
+
+function normalizeTrustedDevices(devices: unknown): TrustedDevice[] {
+  if (!Array.isArray(devices)) {
+    return [];
+  }
+
+  return devices.flatMap((device) => {
+    if (!device || typeof device !== "object") {
+      return [];
+    }
+
+    const trustedDevice = device as Partial<TrustedDevice>;
+    if (!trustedDevice.id || !trustedDevice.secretHash) {
+      return [];
+    }
+
+    return [{
+      id: String(trustedDevice.id),
+      secretHash: String(trustedDevice.secretHash),
+      createdAt: String(trustedDevice.createdAt || ""),
+      lastSeenAt: String(trustedDevice.lastSeenAt || trustedDevice.createdAt || ""),
+    }];
+  });
 }

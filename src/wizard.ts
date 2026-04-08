@@ -208,6 +208,7 @@ async function setupPersistentTunnel(cloudflaredPath: string): Promise<TermiSave
       name: tunnelName,
       domain: fullDomain,
     },
+    trustedDevices: [],
   };
   saveConfig(config);
   note(`Saved to ${configDir()}/config.json`, "Config");
@@ -219,7 +220,7 @@ export interface WizardResult {
   mode: "tunnel" | "persistent";
   port: number;
   shell: string;
-  token: string;
+  token?: string;
   cloudflaredPath: string;
   savedConfig?: TermiSavedConfig;
 }
@@ -283,7 +284,7 @@ export async function runWizard(): Promise<WizardResult> {
     mode: resolvedMode,
     port: DEFAULT_PORT,
     shell: process.env.SHELL || "/bin/bash",
-    token: generateToken(),
+    token: resolvedMode === "tunnel" ? generateToken() : undefined,
     cloudflaredPath: cfPath,
     savedConfig,
   };

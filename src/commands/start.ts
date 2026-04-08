@@ -1,15 +1,17 @@
 import { outro, spinner } from "@clack/prompts";
 import { runWizard } from "../wizard.js";
+import { createPairingManager } from "../pairing.js";
 import { spawnPty } from "../pty-manager.js";
-import { startServer } from "../server.js";
+import { startServer, type ServerAuth } from "../server.js";
 import { startTunnel, startNamedTunnel, TunnelHandle } from "../tunnel.js";
-import { printBanner, printSessionInfo } from "../display.js";
+import { printBanner, printPairingCode, printSessionInfo } from "../display.js";
 import { getVersion } from "../version.js";
 import {
   attachLocalTerminalInput,
   createBufferedOutputBridge,
   createSessionCleanup,
 } from "../session.js";
+import { saveConfig } from "../config.js";
 
 async function openRemoteTunnel(
   config: Awaited<ReturnType<typeof runWizard>>,
@@ -45,6 +47,32 @@ function getTunnelFailureMessage(config: Awaited<ReturnType<typeof runWizard>>):
     : "Failed to start tunnel";
 }
 
+function createServerAuth(config: Awaited<ReturnType<typeof runWizard>>): ServerAuth {
+  if (config.mode === "persistent" && config.savedConfig) {
+    const pairing = createPairingManager((code) => {
+      printPairingCode(code);
+    });
+
+    return {
+      mode: "trusted-browser",
+      pairing,
+      trustedDevices: config.savedConfig.trustedDevices,
+      onTrustedDevicesChange: (trustedDevices) => {
+        config.savedConfig = {
+          ...config.savedConfig!,
+          trustedDevices,
+        };
+        saveConfig(config.savedConfig);
+      },
+    };
+  }
+
+  return {
+    mode: "token",
+    token: config.token!,
+  };
+}
+
 export async function startCommand(): Promise<void> {
   const version = getVersion();
   const config = await runWizard();
@@ -56,7 +84,8 @@ export async function startCommand(): Promise<void> {
   const pty = spawnPty(config.shell, cols, rows);
   const outputBridge = createBufferedOutputBridge(pty);
 
-  const server = await startServer(pty, config.token, config.port);
+  const serverAuth = createServerAuth(config);
+  const server = await startServer(pty, serverAuth, config.port);
 
   let tunnel: TunnelHandle | undefined;
   const tunnelSpinner = spinner();
@@ -74,10 +103,15 @@ export async function startCommand(): Promise<void> {
     }
     process.exit(1);
   }
-  const url = `${tunnel.url}/?t=${config.token}`;
+  const url = config.mode === "persistent"
+    ? tunnel.url
+    : `${tunnel.url}/?t=${config.token}`;
 
   printBanner(version);
   printSessionInfo(url, config.mode === "persistent" ? "persistent" : "tunnel");
+  if (serverAuth.mode === "trusted-browser") {
+    printPairingCode(serverAuth.pairing.getCode());
+  }
 
   const detachLocalInput = attachLocalTerminalInput(pty);
   const cleanup = createSessionCleanup(pty, server, detachLocalInput, () => tunnel);
