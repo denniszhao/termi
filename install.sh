@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="dz/termi"
+REPO="denniszhao/termi"
 INSTALL_DIR="${TERMI_INSTALL_DIR:-$HOME/.termi}"
 BIN_DIR="${TERMI_BIN_DIR:-$HOME/.local/bin}"
 

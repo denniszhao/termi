@@ -1,5 +1,9 @@
 # Termi
 
+<p align="center">
+  <img src="./assets/termi_logo.png" alt="Termi logo" width="180">
+</p>
+
 Turn a local shell into a phone-friendly terminal you can open from a QR code.
 
 Termi is a self-hosted Node.js CLI for starting a terminal session on your machine and exposing it through a simple mobile web UI. It is aimed at long-running local workflows where you want to check output, keep a session alive, or send input from your phone without SSH setup, tmux wrangling, or port-forwarding.
@@ -18,7 +22,7 @@ Termi is a self-hosted Node.js CLI for starting a terminal session on your machi
 ### Quick install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dz/termi/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/denniszhao/termi/main/install.sh | bash
 ```
 
 The installer:
@@ -37,7 +41,7 @@ export PATH="$HOME/.local/bin:$PATH"
 ### Manual install
 
 ```bash
-git clone https://github.com/dz/termi.git ~/.termi
+git clone https://github.com/denniszhao/termi.git ~/.termi
 cd ~/.termi
 npm install
 npm run build
@@ -119,7 +123,8 @@ Persistent mode walks through:
 4. Tunnel creation and DNS routing
 5. Saving tunnel metadata for reuse
 
-Saved persistent tunnel state lives under `~/.termi`. Run `termi reset` to clear the saved tunnel config, credentials, and temporary tunnel files, then go through setup again.
+Saved persistent tunnel state lives under `~/.termi`. Run `termi reset` to clear the saved local tunnel config, credentials, and temporary tunnel files, then go through setup again.
+This does not delete remote Cloudflare tunnels or DNS records.
 
 ## How It Works
 
