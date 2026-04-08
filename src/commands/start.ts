@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
 import { outro, spinner } from "@clack/prompts";
 import { runWizard } from "../wizard.js";
 import { spawnPty } from "../pty-manager.js";
@@ -8,16 +5,7 @@ import { startServer } from "../server.js";
 import { startTunnel, startNamedTunnel, TunnelHandle } from "../tunnel.js";
 import { printBanner, printSessionInfo } from "../display.js";
 import { BRAND } from "../constants.js";
-
-function getVersion(): string {
-  try {
-    const dir = dirname(fileURLToPath(import.meta.url));
-    const pkg = JSON.parse(readFileSync(join(dir, "..", "package.json"), "utf-8"));
-    return pkg.version;
-  } catch {
-    return "0.0.0-dev";
-  }
-}
+import { getVersion } from "../version.js";
 
 export async function startCommand(): Promise<void> {
   const version = getVersion();
@@ -84,18 +72,33 @@ export async function startCommand(): Promise<void> {
   printBanner(version);
   printSessionInfo(url, config.mode === "persistent" ? "persistent" : "tunnel");
 
+  let cleanedUp = false;
   function cleanup() {
+    if (cleanedUp) {
+      return;
+    }
+    cleanedUp = true;
+    process.removeListener("SIGINT", cleanup);
+    process.removeListener("SIGTERM", cleanup);
+
     if (process.stdin.isTTY && process.stdin.isRaw) {
       process.stdin.setRawMode(false);
     }
     process.stdin.pause();
     console.log(`\n  ${BRAND} Session ended.\n`);
-    pty.kill();
-    server.close();
-    tunnel?.kill();
+    try {
+      pty.kill();
+    } catch {}
+    try {
+      server.close();
+    } catch {}
+    try {
+      tunnel?.kill();
+    } catch {}
     process.exit(0);
   }
 
+  process.on("SIGINT", cleanup);
   process.on("SIGTERM", cleanup);
   pty.onExit(() => cleanup());
 

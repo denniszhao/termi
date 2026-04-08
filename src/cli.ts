@@ -1,17 +1,5 @@
 import { BRAND } from "./constants.js";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-
-function getVersion(): string {
-  try {
-    const dir = dirname(fileURLToPath(import.meta.url));
-    const pkg = JSON.parse(readFileSync(join(dir, "..", "package.json"), "utf-8"));
-    return pkg.version;
-  } catch {
-    return "0.0.0-dev";
-  }
-}
+import { getVersion } from "./version.js";
 
 const version = getVersion();
 const args = process.argv.slice(2);
@@ -31,7 +19,7 @@ switch (command) {
   case "reset": {
     const { resetPersistentState } = await import("./config.js");
     resetPersistentState();
-    console.log(`${BRAND} Persistent tunnel state cleared. Run 'termi' to set up again.`);
+    console.log(`${BRAND} Local persistent tunnel state cleared. Run 'termi' to set up again.`);
     break;
   }
   case "--help":
@@ -43,7 +31,7 @@ switch (command) {
     console.log("");
     console.log("Commands:");
     console.log("  start    Start a terminal session (default)");
-    console.log("  reset    Clear saved persistent tunnel setup");
+    console.log("  reset    Clear local persistent tunnel setup");
     console.log("  help     Show this help message");
     break;
   default:
