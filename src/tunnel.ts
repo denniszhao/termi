@@ -22,6 +22,92 @@ function parseTunnelUrl(line: string): string | null {
   }
 }
 
+async function waitForTunnelReady(url: string, timeoutMs = 30_000): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(3000) });
+      if (res.ok) return;
+    } catch {
+      // DNS not ready yet or connection refused — keep trying
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  // Don't throw — the tunnel might still work, DNS might just be slow
+}
+
+export function startNamedTunnel(
+  cloudflaredPath: string,
+  tunnelId: string,
+  domain: string,
+  localPort: number,
+): Promise<TunnelHandle> {
+  const tmpDir = join(homedir(), ".termi", "tmp");
+  mkdirSync(tmpDir, { recursive: true });
+  const cfgPath = join(tmpDir, "cloudflared.yml");
+  const credPath = join(homedir(), ".termi", "credentials.json");
+
+  const yml = [
+    `tunnel: ${tunnelId}`,
+    `credentials-file: ${credPath}`,
+    `ingress:`,
+    `  - hostname: ${domain}`,
+    `    service: http://127.0.0.1:${localPort}`,
+    `  - service: http_status:404`,
+  ].join("\n") + "\n";
+  writeFileSync(cfgPath, yml);
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn(
+      cloudflaredPath,
+      ["tunnel", "--no-autoupdate", "--config", cfgPath, "run"],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+
+    const timeout = setTimeout(() => {
+      proc.kill("SIGTERM");
+      reject(new Error("Timed out waiting for tunnel connection (30s)"));
+    }, 30_000);
+
+    let resolved = false;
+
+    function handleLine(line: string) {
+      if (resolved) return;
+      if (line.includes("Registered tunnel connection")) {
+        resolved = true;
+        clearTimeout(timeout);
+        resolve({
+          url: `https://${domain}`,
+          kill: () => proc.kill("SIGTERM"),
+        });
+      }
+    }
+
+    if (proc.stdout) {
+      createInterface({ input: proc.stdout }).on("line", handleLine);
+    }
+    if (proc.stderr) {
+      createInterface({ input: proc.stderr }).on("line", handleLine);
+    }
+
+    proc.on("error", (err) => {
+      if (!resolved) {
+        clearTimeout(timeout);
+        reject(err);
+      }
+    });
+
+    proc.on("exit", (code) => {
+      if (!resolved) {
+        clearTimeout(timeout);
+        reject(new Error(`cloudflared exited with code ${code}`));
+      } else {
+        console.error(`\n  Warning: cloudflared exited unexpectedly (code ${code})`);
+      }
+    });
+  });
+}
+
 export function startTunnel(
   cloudflaredPath: string,
   localPort: number,
@@ -53,9 +139,12 @@ export function startTunnel(
       if (url) {
         resolved = true;
         clearTimeout(timeout);
-        resolve({
-          url,
-          kill: () => proc.kill("SIGTERM"),
+        // Wait for DNS to propagate before returning the URL
+        waitForTunnelReady(url).then(() => {
+          resolve({
+            url,
+            kill: () => proc.kill("SIGTERM"),
+          });
         });
       }
     }

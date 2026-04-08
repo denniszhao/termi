@@ -9,11 +9,22 @@ export interface PtyHandle {
 }
 
 export function spawnPty(shell?: string, cols = 80, rows = 24): PtyHandle {
-  const resolvedShell = shell || process.env.SHELL || "/bin/bash";
+  const resolvedShell =
+    shell || process.env.SHELL || (process.platform === "darwin" ? "/bin/zsh" : "/bin/bash");
 
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v !== undefined) env[k] = v;
+  }
+
+  // Suppress macOS "default shell is now zsh" nag when using bash
+  if (process.platform === "darwin") {
+    env.BASH_SILENCE_DEPRECATION_WARNING = "1";
+  }
+
+  // Set a cleaner prompt if the user doesn't have one customized
+  if (!env.PS1 || env.PS1 === "\\s-\\v\\$ ") {
+    env.PS1 = "\\[\\033[1;36m\\]\\W\\[\\033[0m\\] \\$ ";
   }
 
   const proc = pty.spawn(resolvedShell, [], {

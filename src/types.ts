@@ -7,10 +7,18 @@ declare module "qrcode-terminal" {
 }
 
 export interface TermiConfig {
-  mode: "tunnel" | "local";
+  mode: "tunnel" | "persistent";
   port: number;
   shell: string;
   token: string;
+}
+
+export interface TermiSavedConfig {
+  tunnel: {
+    id: string;
+    name: string;
+    domain: string;
+  };
 }
 
 export interface WsClientMessage {

@@ -28,6 +28,12 @@ switch (command) {
   case "-v":
     console.log(`${BRAND} Termi v${version}`);
     break;
+  case "reset": {
+    const { resetConfig } = await import("./config.js");
+    resetConfig();
+    console.log(`${BRAND} Config reset. Run 'termi' to set up again.`);
+    break;
+  }
   case "--help":
   case "-h":
   case "help":
@@ -37,6 +43,7 @@ switch (command) {
     console.log("");
     console.log("Commands:");
     console.log("  start    Start a terminal session (default)");
+    console.log("  reset    Clear saved tunnel config");
     console.log("  help     Show this help message");
     break;
   default:

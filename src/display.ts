@@ -12,7 +12,7 @@ export function printSessionInfo(url: string, mode: string): void {
   console.log("");
   console.log(
     chalk.green("  Ready!") +
-      chalk.dim(` (${mode === "tunnel" ? "Cloudflare Tunnel" : "local network"})`),
+      chalk.dim(` (${mode === "persistent" ? "persistent URL" : "quick tunnel"})`),
   );
   console.log("");
 
@@ -24,7 +24,7 @@ export function printSessionInfo(url: string, mode: string): void {
     console.log(`  ${chalk.cyan(url)}`);
     console.log("");
     console.log(chalk.dim("  Scan the QR code or open the URL on your phone."));
-    console.log(chalk.dim("  Press Ctrl+C to stop."));
+    console.log(chalk.dim("  Type 'exit' or press Ctrl+D to stop."));
     console.log("");
   });
 }
