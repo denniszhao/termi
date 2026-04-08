@@ -15,6 +15,7 @@ export function getHtml(): string {
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
+  <div id="terminal-brand"><span id="terminal-brand-logo">🍉</span><span id="terminal-brand-wordmark">termi</span></div>
   <div id="status">Connecting...</div>
   <div id="terminal"></div>
   <div id="trackpad-hint">&larr; &rarr; &uarr; &darr;</div>

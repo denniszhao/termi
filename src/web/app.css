@@ -11,18 +11,57 @@ html, body {
   -webkit-text-size-adjust: 100%;
 }
 
+body {
+  display: flex;
+  flex-direction: column;
+}
+
 #terminal {
   width: 100%;
+  flex: 1;
+  min-height: 0;
+  padding: 3px;
+  background: #1e1e1e;
+}
+
+#terminal .xterm {
   height: 100%;
+  background: #1e1e1e;
+}
+
+#terminal-brand {
+  display: inline-flex;
+  align-items: center;
+  font-family: monospace;
+  pointer-events: none;
+}
+
+#terminal-brand-logo,
+#terminal-brand-wordmark {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  color: #000;
+  line-height: 1;
+}
+
+#terminal-brand-logo {
+  background: #08844b;
+  padding: 0 3px;
+}
+
+#terminal-brand-wordmark {
+  background: #f8312f;
+  padding: 0 4px;
+  font-weight: 700;
 }
 
 #status {
   position: fixed;
-  top: 0;
+  top: 16px;
   left: 0;
   right: 0;
   padding: 4px 8px;
-  padding-top: calc(4px + env(safe-area-inset-top));
   font-family: monospace;
   font-size: 12px;
   color: #888;

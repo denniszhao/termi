@@ -37,6 +37,7 @@ const token = new URLSearchParams(location.search).get("t") ?? "";
 const wsUrl = `${proto}//${location.host}/?t=${token}`;
 
 const terminalEl = mustGetElement<HTMLDivElement>("terminal");
+const terminalBrandEl = mustGetElement<HTMLDivElement>("terminal-brand");
 const statusEl = mustGetElement<HTMLDivElement>("status");
 const keyboardEl = mustGetElement<HTMLDivElement>("keyboard");
 const toggleButton = mustGetElement<HTMLButtonElement>("kb-toggle");
@@ -315,26 +316,42 @@ function positionToggle(): void {
 function fitTerminal(): void {
   const keyboardHeight = isMobile && useCustomKeyboard ? keyboardEl.offsetHeight : 0;
   const viewportHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-  terminalEl.style.height = `${viewportHeight - keyboardHeight}px`;
+  terminalEl.style.height = `${viewportHeight - keyboardHeight - terminalBrandEl.offsetHeight}px`;
   fitAddon.fit();
   positionToggle();
+}
+
+function focusNativeKeyboard(): void {
+  window.requestAnimationFrame(() => {
+    term.focus();
+  });
+}
+
+function hideNativeKeyboard(): void {
+  term.blur();
+  helperTextarea?.blur();
 }
 
 function toggleKeyboard(): void {
   useCustomKeyboard = !useCustomKeyboard;
   if (useCustomKeyboard) {
+    hideNativeKeyboard();
     helperTextarea?.setAttribute("inputMode", "none");
     keyboardEl.classList.add("visible");
     toggleButton.classList.remove("native-active");
   } else {
-    helperTextarea?.removeAttribute("inputMode");
     keyboardEl.classList.remove("visible");
     toggleButton.classList.add("native-active");
+    helperTextarea?.removeAttribute("inputMode");
   }
   toggleButton.textContent = "\u2328";
   fitTerminal();
   sendResize();
-  term.focus();
+  if (useCustomKeyboard) {
+    hideNativeKeyboard();
+  } else {
+    focusNativeKeyboard();
+  }
 }
 
 function scheduleReconnect(): void {
@@ -497,7 +514,9 @@ if (isMobile) {
     "touchend",
     () => {
       if (!trackpadDragging) {
-        term.focus();
+        if (!useCustomKeyboard) {
+          term.focus();
+        }
       }
       trackpadDragging = false;
     },
