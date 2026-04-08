@@ -1,60 +1,64 @@
 {
-  "name": "termi-cli",
-  "version": "0.1.0",
-  "description": "View and control a terminal session from your phone",
-  "license": "MIT",
-  "type": "module",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/denniszhao/termi.git"
-  },
-  "homepage": "https://github.com/denniszhao/termi",
-  "bugs": {
-    "url": "https://github.com/denniszhao/termi/issues"
-  },
-  "engines": {
-    "node": ">=20"
-  },
-  "keywords": [
-    "terminal",
-    "pty",
-    "cli",
-    "cloudflare",
-    "remote",
-    "mobile"
-  ],
-  "files": [
-    "dist",
-    "assets",
-    "README.md",
-    "LICENSE"
-  ],
-  "bin": {
-    "termi": "./dist/cli.mjs"
-  },
-  "scripts": {
-    "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true",
-    "build": "node build.mjs",
-    "dev": "node build.mjs --watch",
-    "start": "node dist/cli.mjs start",
-    "check": "npm run build && node dist/cli.mjs --help && node dist/cli.mjs --version",
-    "test": "npm run build && node --import tsx --test test/auth.test.ts test/cloudflare.test.ts test/config.test.ts test/tunnel.test.ts",
-    "test:server": "npm run build && TERMI_RUN_SERVER_TESTS=1 node --import tsx --test test/server.test.ts"
-  },
-  "dependencies": {
-    "@clack/prompts": "^0.9",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0",
-    "chalk": "^5.4",
-    "node-pty": "^1.0",
-    "qrcode-terminal": "^0.12",
-    "ws": "^8.18"
-  },
-  "devDependencies": {
-    "@types/node": "^22",
-    "@types/ws": "^8",
-    "esbuild": "^0.25",
-    "tsx": "^4.21.0",
-    "typescript": "^5.7"
-  }
+    "name": "termi-cli",
+    "version": "0.1.0",
+    "description": "View and control a terminal session from your phone",
+    "license": "MIT",
+    "type": "module",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/denniszhao/termi.git"
+    },
+    "homepage": "https://github.com/denniszhao/termi",
+    "bugs": {
+        "url": "https://github.com/denniszhao/termi/issues"
+    },
+    "engines": {
+        "node": ">=20"
+    },
+    "keywords": [
+        "terminal",
+        "pty",
+        "cli",
+        "cloudflare",
+        "remote",
+        "mobile",
+        "codex on phone",
+        "claude on phone",
+        "code on phone",
+        "cli"
+    ],
+    "files": [
+        "dist",
+        "assets",
+        "README.md",
+        "LICENSE"
+    ],
+    "bin": {
+        "termi": "./dist/cli.mjs"
+    },
+    "scripts": {
+        "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true",
+        "build": "node build.mjs",
+        "dev": "node build.mjs --watch",
+        "start": "node dist/cli.mjs start",
+        "check": "npm run build && node dist/cli.mjs --help && node dist/cli.mjs --version",
+        "test": "npm run build && node --import tsx --test test/auth.test.ts test/cloudflare.test.ts test/config.test.ts test/tunnel.test.ts",
+        "test:server": "npm run build && TERMI_RUN_SERVER_TESTS=1 node --import tsx --test test/server.test.ts"
+    },
+    "dependencies": {
+        "@clack/prompts": "^0.9",
+        "@xterm/addon-fit": "^0.11.0",
+        "@xterm/xterm": "^6.0.0",
+        "chalk": "^5.4",
+        "node-pty": "^1.0",
+        "qrcode-terminal": "^0.12",
+        "ws": "^8.18"
+    },
+    "devDependencies": {
+        "@types/node": "^22",
+        "@types/ws": "^8",
+        "esbuild": "^0.25",
+        "tsx": "^4.21.0",
+        "typescript": "^5.7"
+    }
 }
