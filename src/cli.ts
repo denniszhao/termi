@@ -22,6 +22,16 @@ switch (command) {
     console.log(`${BRAND} Local persistent tunnel state cleared. Run 'termi' to set up again.`);
     break;
   }
+  case "devices": {
+    const { devicesCommand } = await import("./commands/devices.js");
+    await devicesCommand();
+    break;
+  }
+  case "revoke": {
+    const { revokeCommand } = await import("./commands/revoke.js");
+    await revokeCommand();
+    break;
+  }
   case "--help":
   case "-h":
   case "help":
@@ -31,6 +41,8 @@ switch (command) {
     console.log("");
     console.log("Commands:");
     console.log("  start    Start a terminal session (default)");
+    console.log("  devices  List trusted browsers for persistent sessions");
+    console.log("  revoke   Revoke one or all trusted browsers");
     console.log("  reset    Clear local persistent tunnel setup");
     console.log("  help     Show this help message");
     break;
