@@ -32,6 +32,8 @@ The installer:
 - installs dependencies and builds the CLI
 - symlinks `termi` into `~/.local/bin/termi`
 
+GitHub is the primary install channel for now.
+
 If `~/.local/bin` is not already on your `PATH`, add:
 
 ```bash
@@ -43,7 +45,7 @@ export PATH="$HOME/.local/bin:$PATH"
 ```bash
 git clone https://github.com/denniszhao/termi.git ~/.termi
 cd ~/.termi
-npm install
+npm ci
 npm run build
 mkdir -p ~/.local/bin
 ln -sf "$HOME/.termi/dist/cli.mjs" "$HOME/.local/bin/termi"
@@ -151,7 +153,7 @@ This is a convenience tool for personal remote access, not a hardened multi-user
 Install dependencies:
 
 ```bash
-npm install
+npm ci
 ```
 
 Build once:
@@ -164,6 +166,12 @@ Watch and rebuild during development:
 
 ```bash
 npm run dev
+```
+
+Run the local smoke checks:
+
+```bash
+npm run check
 ```
 
 Run the built CLI locally:

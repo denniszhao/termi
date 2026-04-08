@@ -2,6 +2,7 @@
 set -euo pipefail
 
 REPO="denniszhao/termi"
+REPO_URL="${TERMI_REPO_URL:-https://github.com/$REPO.git}"
 INSTALL_DIR="${TERMI_INSTALL_DIR:-$HOME/.termi}"
 BIN_DIR="${TERMI_BIN_DIR:-$HOME/.local/bin}"
 
@@ -34,18 +35,23 @@ fi
 
 # Clone or update
 if [ -d "$INSTALL_DIR" ]; then
+  if [ ! -d "$INSTALL_DIR/.git" ]; then
+    echo "  Error: $INSTALL_DIR already exists but is not a git repository."
+    echo "  Remove it or choose a different TERMI_INSTALL_DIR."
+    exit 1
+  fi
   echo "  Updating existing installation..."
   cd "$INSTALL_DIR"
   git pull --ff-only
 else
   echo "  Cloning termi..."
-  git clone "https://github.com/$REPO.git" "$INSTALL_DIR"
+  git clone "$REPO_URL" "$INSTALL_DIR"
   cd "$INSTALL_DIR"
 fi
 
 # Install dependencies
 echo "  Installing dependencies..."
-npm install --loglevel=error 2>&1
+npm ci --loglevel=error 2>&1
 
 # Build
 echo "  Building..."

@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.npm-cache/
 .DS_Store
 coverage/
 .cache/
@@ -12,5 +13,7 @@ yarn-debug.log*
 yarn-error.log*
 .env
 .env.*
+.claude/
+.codex-tmp/
 .vscode/
 .idea/
