@@ -85,7 +85,7 @@ termi reset
 ### What happens when you run it
 
 1. Termi checks for `cloudflared` and offers to download it if needed.
-2. If you already configured a persistent URL, Termi reuses it automatically.
+2. If you already configured a persistent URL, Termi lets you choose whether to reuse it, start a quick tunnel, or set up a new persistent URL.
 3. Otherwise, you choose between a quick tunnel and a persistent URL.
 4. Termi starts a shell session using your current `SHELL` value.
 5. A local server is started and exposed through Cloudflare.
@@ -119,7 +119,7 @@ Persistent mode walks through:
 4. Tunnel creation and DNS routing
 5. Saving tunnel metadata for reuse
 
-Saved tunnel configuration lives under `~/.termi`. Run `termi reset` to clear the saved tunnel config and go through setup again.
+Saved persistent tunnel state lives under `~/.termi`. Run `termi reset` to clear the saved tunnel config, credentials, and temporary tunnel files, then go through setup again.
 
 ## How It Works
 
@@ -137,7 +137,7 @@ Saved tunnel configuration lives under `~/.termi`. Run `termi reset` to clear th
 - quick tunnel mode does not require an external application server
 - Termi does not persist terminal output as part of its normal session flow
 
-Persistent mode stores Cloudflare-related files locally in `~/.termi`, including saved tunnel config and credentials used to reconnect the tunnel.
+Persistent mode stores Cloudflare-related files locally in `~/.termi`, including saved tunnel config, certificates, and credentials used to reconnect the tunnel.
 
 This is a convenience tool for personal remote access, not a hardened multi-user remote access system. Treat the session URL as a secret.
 

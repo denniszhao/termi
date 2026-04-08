@@ -1,8 +1,8 @@
-import { spawn, ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { credentialsPath, tmpDir, writeSecureFile } from "./config.js";
 
 export interface TunnelHandle {
   url: string;
@@ -42,10 +42,8 @@ export function startNamedTunnel(
   domain: string,
   localPort: number,
 ): Promise<TunnelHandle> {
-  const tmpDir = join(homedir(), ".termi", "tmp");
-  mkdirSync(tmpDir, { recursive: true });
-  const cfgPath = join(tmpDir, "cloudflared.yml");
-  const credPath = join(homedir(), ".termi", "credentials.json");
+  const cfgPath = join(tmpDir(), "cloudflared-persistent.yml");
+  const credPath = credentialsPath();
 
   const yml = [
     `tunnel: ${tunnelId}`,
@@ -55,7 +53,7 @@ export function startNamedTunnel(
     `    service: http://127.0.0.1:${localPort}`,
     `  - service: http_status:404`,
   ].join("\n") + "\n";
-  writeFileSync(cfgPath, yml);
+  writeSecureFile(cfgPath, yml);
 
   return new Promise((resolve, reject) => {
     const proc = spawn(
@@ -76,9 +74,12 @@ export function startNamedTunnel(
       if (line.includes("Registered tunnel connection")) {
         resolved = true;
         clearTimeout(timeout);
-        resolve({
-          url: `https://${domain}`,
-          kill: () => proc.kill("SIGTERM"),
+        const url = `https://${domain}`;
+        waitForTunnelReady(url).then(() => {
+          resolve({
+            url,
+            kill: () => proc.kill("SIGTERM"),
+          });
         });
       }
     }
@@ -115,10 +116,9 @@ export function startTunnel(
   return new Promise((resolve, reject) => {
     // Write a minimal config to avoid picking up the user's existing
     // cloudflared config (which may have ingress rules that interfere).
-    const tmpDir = join(homedir(), ".termi", "tmp");
-    mkdirSync(tmpDir, { recursive: true });
-    const tmpConfig = join(tmpDir, "cloudflared.yml");
-    writeFileSync(tmpConfig, "# termi quick tunnel\n");
+    const tmpConfig = join(tmpDir(), "cloudflared-quick.yml");
+    rmSync(tmpConfig, { force: true });
+    writeSecureFile(tmpConfig, "# termi quick tunnel\n");
 
     const proc = spawn(
       cloudflaredPath,

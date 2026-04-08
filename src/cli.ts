@@ -29,9 +29,9 @@ switch (command) {
     console.log(`${BRAND} Termi v${version}`);
     break;
   case "reset": {
-    const { resetConfig } = await import("./config.js");
-    resetConfig();
-    console.log(`${BRAND} Config reset. Run 'termi' to set up again.`);
+    const { resetPersistentState } = await import("./config.js");
+    resetPersistentState();
+    console.log(`${BRAND} Persistent tunnel state cleared. Run 'termi' to set up again.`);
     break;
   }
   case "--help":
@@ -43,7 +43,7 @@ switch (command) {
     console.log("");
     console.log("Commands:");
     console.log("  start    Start a terminal session (default)");
-    console.log("  reset    Clear saved tunnel config");
+    console.log("  reset    Clear saved persistent tunnel setup");
     console.log("  help     Show this help message");
     break;
   default:

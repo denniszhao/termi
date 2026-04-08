@@ -31,7 +31,7 @@ export function spawnPty(shell?: string, cols = 80, rows = 24): PtyHandle {
     name: "xterm-256color",
     cols,
     rows,
-    cwd: process.env.HOME || "/",
+    cwd: process.cwd(),
     env,
   });
 

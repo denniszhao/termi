@@ -6,6 +6,10 @@ import { getHtml } from "./html.js";
 import { icon192, favicon96, faviconIco, manifest } from "./assets.js";
 import type { WsClientMessage } from "./types.js";
 
+const HISTORY_LIMIT_BYTES = 512 * 1024;
+const CLIENT_BUFFER_LIMIT_BYTES = 1024 * 1024;
+const FLUSH_INTERVAL_MS = 16;
+
 export interface ServerHandle {
   port: number;
   close(): void;
@@ -18,6 +22,53 @@ export function startServer(
 ): Promise<ServerHandle> {
   const html = getHtml();
   const clients = new Set<WebSocket>();
+  const history: string[] = [];
+  let historyBytes = 0;
+  let pendingOutput = "";
+  let flushTimer: NodeJS.Timeout | undefined;
+
+  function appendToHistory(chunk: string): void {
+    history.push(chunk);
+    historyBytes += Buffer.byteLength(chunk);
+
+    while (historyBytes > HISTORY_LIMIT_BYTES && history.length > 0) {
+      const removed = history.shift()!;
+      historyBytes -= Buffer.byteLength(removed);
+    }
+  }
+
+  function flushPendingOutput(): void {
+    flushTimer = undefined;
+    if (!pendingOutput) {
+      return;
+    }
+
+    const data = pendingOutput;
+    pendingOutput = "";
+    appendToHistory(data);
+
+    const msg = JSON.stringify({ type: "data", data });
+    for (const ws of clients) {
+      if (ws.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+      if (ws.bufferedAmount > CLIENT_BUFFER_LIMIT_BYTES) {
+        ws.close(1013, "Client too slow");
+        continue;
+      }
+      ws.send(msg, (err) => {
+        if (err) {
+          ws.terminate();
+        }
+      });
+    }
+  }
+
+  function scheduleFlush(): void {
+    if (!flushTimer) {
+      flushTimer = setTimeout(flushPendingOutput, FLUSH_INTERVAL_MS);
+    }
+  }
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url || "/", `http://${req.headers.host}`);
@@ -90,6 +141,15 @@ export function startServer(
   });
 
   wss.on("connection", (ws) => {
+    const initialOutput = history.join("");
+    if (initialOutput) {
+      ws.send(JSON.stringify({ type: "data", data: initialOutput }), (err) => {
+        if (err) {
+          ws.terminate();
+        }
+      });
+    }
+
     clients.add(ws);
 
     ws.on("message", (raw) => {
@@ -111,12 +171,8 @@ export function startServer(
   });
 
   ptyHandle.onData((data) => {
-    const msg = JSON.stringify({ type: "data", data });
-    for (const ws of clients) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(msg);
-      }
-    }
+    pendingOutput += data;
+    scheduleFlush();
   });
 
   return new Promise((resolve, reject) => {
@@ -127,6 +183,9 @@ export function startServer(
         resolve({
           port: actualPort,
           close: () => {
+            if (flushTimer) {
+              clearTimeout(flushTimer);
+            }
             for (const ws of clients) ws.close();
             wss.close();
             server.close();

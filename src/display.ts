@@ -16,7 +16,7 @@ export function printSessionInfo(url: string, mode: string): void {
   );
   console.log("");
 
-  qrcode.generate(url, { small: true }, (qr) => {
+  qrcode.generate(url, { small: true }, (qr: string) => {
     for (const line of qr.split("\n")) {
       console.log(`  ${line}`);
     }

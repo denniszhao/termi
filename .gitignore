@@ -1,2 +1,16 @@
 node_modules/
 dist/
+.DS_Store
+coverage/
+.cache/
+test-results/
+playwright-report/
+*.tsbuildinfo
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.env
+.env.*
+.vscode/
+.idea/

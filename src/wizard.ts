@@ -10,7 +10,7 @@ import {
 } from "@clack/prompts";
 import chalk from "chalk";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, copyFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { BRAND, DEFAULT_PORT } from "./constants.js";
@@ -20,15 +20,16 @@ import {
   downloadCloudflared,
 } from "./cloudflared-installer.js";
 import {
+  copySecureFile,
   loadConfig,
   saveConfig,
   configDir,
   certPath,
   credentialsPath,
 } from "./config.js";
-import type { TermiConfig, TermiSavedConfig } from "./types.js";
+import type { TermiSavedConfig } from "./types.js";
 
-function handleCancel(value: unknown): asserts value is Exclude<typeof value, symbol> {
+function handleCancel<T>(value: T): asserts value is Exclude<T, symbol> {
   if (isCancel(value)) {
     cancel("Cancelled.");
     process.exit(0);
@@ -135,7 +136,7 @@ async function ensureAuth(cloudflaredPath: string): Promise<void> {
     process.exit(1);
   }
 
-  copyFileSync(defaultCert, cert);
+  copySecureFile(defaultCert, cert);
 
   // Clean up if we created the default cert (don't pollute ~/.cloudflared/)
   if (!hadExistingCert) {
@@ -295,52 +296,60 @@ export interface WizardResult {
 export async function runWizard(): Promise<WizardResult> {
   const saved = loadConfig();
 
-  // If we have a saved persistent tunnel config, skip the wizard
-  if (saved) {
-    intro(`${BRAND} ${chalk.bold("Termi")}`);
-    note(`Using saved tunnel: ${chalk.cyan(saved.tunnel.domain)}`, "Persistent URL");
-
-    const cfPath = await ensureCloudflared();
-
-    return {
-      mode: "persistent",
-      port: DEFAULT_PORT,
-      shell: process.env.SHELL || "/bin/bash",
-      token: generateToken(),
-      cloudflaredPath: cfPath,
-      savedConfig: saved,
-    };
-  }
-
   intro(`${BRAND} ${chalk.bold("Termi")}`);
+
+  if (saved) {
+    note(`Saved persistent URL: ${chalk.cyan(saved.tunnel.domain)}`, "Persistent URL");
+  }
 
   const mode = await select({
     message: "How should your phone connect?",
-    options: [
-      {
-        value: "tunnel" as const,
-        label: "Quick tunnel",
-        hint: "random URL each time — no setup needed",
-      },
-      {
-        value: "persistent" as const,
-        label: "Persistent URL",
-        hint: "same URL every time — requires Cloudflare domain",
-      },
-    ],
+    options: saved
+      ? [
+          {
+            value: "saved-persistent" as const,
+            label: "Use saved persistent URL",
+            hint: saved.tunnel.domain,
+          },
+          {
+            value: "tunnel" as const,
+            label: "Quick tunnel",
+            hint: "random URL this run",
+          },
+          {
+            value: "persistent" as const,
+            label: "Change persistent URL",
+            hint: "replace the saved tunnel configuration",
+          },
+        ]
+      : [
+          {
+            value: "tunnel" as const,
+            label: "Quick tunnel",
+            hint: "random URL each time — no setup needed",
+          },
+          {
+            value: "persistent" as const,
+            label: "Persistent URL",
+            hint: "same URL every time — requires Cloudflare domain",
+          },
+        ],
   });
   handleCancel(mode);
 
   const cfPath = await ensureCloudflared();
 
   let savedConfig: TermiSavedConfig | undefined;
+  const resolvedMode = mode === "saved-persistent" ? "persistent" : mode;
 
-  if (mode === "persistent") {
+  if (mode === "saved-persistent") {
+    savedConfig = saved ?? undefined;
+  } else if (mode === "persistent") {
     savedConfig = await setupPersistentTunnel(cfPath);
   }
 
   return {
-    mode,
+    mode: resolvedMode,
     port: DEFAULT_PORT,
     shell: process.env.SHELL || "/bin/bash",
     token: generateToken(),
