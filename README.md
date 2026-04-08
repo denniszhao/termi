@@ -87,16 +87,15 @@ termi --version
 
 Quick tunnel:
 
-- random `trycloudflare.com` URL each run
-- protected by a per-session URL token
-- no persistent browser trust state
+- Random (free!) `trycloudflare.com` URL each run
+- Protected by a per-session URL token
+- No persistent browser trust state
 
 Persistent URL:
 
-- stable URL on your Cloudflare-managed domain
-- first untrusted browser shows a pairing page
-- trusted browsers reconnect without pairing again
-- trusted devices are saved locally in `~/.termi/config.json`
+- Stable URL on your Cloudflare-managed domain
+- First untrusted browser shows a pairing page
+- Trusted browsers reconnect without pairing again
 
 ## Session Flow
 
@@ -110,10 +109,9 @@ Persistent URL:
 
 ## Mobile UI
 
-- inline connection status block with a live state indicator
-- virtual keyboard plus OS keyboard toggle on mobile
-- drag on the terminal to move the text cursor
-- one-time mobile onboarding, tracked locally in `~/.termi`
+- Virtual keyboard with common terminal commands plus OS keyboard toggle on mobile
+- Drag on the terminal to move the text cursor
+- Connection status indicator
 
 ## Security
 
@@ -123,8 +121,6 @@ Persistent URL:
 - Token and trusted-device comparisons use constant-time checks.
 - The local server listens on `127.0.0.1` only.
 - Termi is a convenience tool for personal remote access, not a hardened multi-user remote access system.
-
-Persistent mode stores Cloudflare credentials, tunnel config, trusted devices, and onboarding state under `~/.termi`.
 
 ## Resetting State
 

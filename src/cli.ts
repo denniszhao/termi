@@ -19,7 +19,7 @@ switch (command) {
   case "reset": {
     const { resetPersistentState } = await import("./config.js");
     resetPersistentState();
-    console.log(`${BRAND} Local persistent tunnel state cleared. Run 'termi' to set up again.`);
+    console.log(`${BRAND} Local persistent tunnel state cleared. Remote Cloudflare tunnels and DNS records were not changed.`);
     break;
   }
   case "devices": {
