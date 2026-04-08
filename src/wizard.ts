@@ -24,13 +24,20 @@ import {
 import type { TermiSavedConfig } from "./types.js";
 import {
   createPersistentTunnel,
+  PersistentTunnelAlreadyExistsError,
   deletePersistentTunnel,
+  deleteCloudflareDnsRecord,
   ensureCloudflareAuth,
+  fetchCloudflareDnsRecord,
   fetchCloudflareDomains,
+  fetchCloudflareZoneId,
+  findPersistentTunnelById,
+  findPersistentTunnelIdByName,
+  dnsRecordMatchesTunnel,
+  parseTunnelIdFromDnsTarget,
   parseCertToken,
   routeTunnelDns,
 } from "./cloudflare.js";
-import { waitForTunnelReady } from "./tunnel.js";
 
 function handleCancel<T>(value: T): asserts value is Exclude<T, symbol> {
   if (isCancel(value)) {
@@ -163,44 +170,150 @@ async function setupPersistentTunnel(cloudflaredPath: string): Promise<TermiSave
   const s2 = spinner();
   s2.start("Creating tunnel...");
   let tunnelId: string;
+  let reusedExistingTunnel = false;
   try {
     tunnelId = createPersistentTunnel(cloudflaredPath, tunnelName);
     s2.stop("Tunnel created.");
   } catch (err) {
-    s2.stop("Failed.");
-    cancel(err instanceof Error ? err.message : String(err));
-    process.exit(1);
+    if (err instanceof PersistentTunnelAlreadyExistsError) {
+      s2.stop("Existing tunnel found.");
+
+      let existingTunnelId: string | null = null;
+      try {
+        existingTunnelId = findPersistentTunnelIdByName(cloudflaredPath, tunnelName);
+      } catch (lookupErr) {
+        cancel(lookupErr instanceof Error ? lookupErr.message : String(lookupErr));
+        process.exit(1);
+      }
+
+      if (!existingTunnelId) {
+        cancel(
+          `A remote tunnel named "${tunnelName}" already exists, but Termi could not resolve its ID automatically. Rename the subdomain or remove the tunnel in Cloudflare.`,
+        );
+        process.exit(1);
+      }
+
+      const reuse = await confirm({
+        message: `Reuse the existing Cloudflare tunnel "${tunnelName}"?`,
+        initialValue: true,
+      });
+      handleCancel(reuse);
+
+      if (!reuse) {
+        cancel("Cancelled. Choose a different subdomain or delete the remote tunnel in Cloudflare.");
+        process.exit(0);
+      }
+
+      reusedExistingTunnel = true;
+      tunnelId = existingTunnelId;
+    } else {
+      s2.stop("Failed.");
+      cancel(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
   }
 
   const s3 = spinner();
   s3.start(`Setting up DNS for ${fullDomain}...`);
-  if (!routeTunnelDns(cloudflaredPath, tunnelId, fullDomain)) {
-    s3.stop("Failed.");
-    const cleanedUp = deletePersistentTunnel(cloudflaredPath, tunnelId);
-    cancel(
-      cleanedUp
-        ? `Failed to set up DNS for ${fullDomain}. The newly created tunnel was removed.`
-        : `Failed to set up DNS for ${fullDomain}. The created tunnel (${tunnelId}) may need manual cleanup.`,
-    );
-    process.exit(1);
-  } else {
+  if (routeTunnelDns(cloudflaredPath, tunnelId, fullDomain)) {
     s3.stop(`DNS ready: ${fullDomain}`);
+  } else {
+    const dnsState = tokenInfo
+      ? await inspectDnsRoute(tokenInfo, domain, fullDomain, tunnelId, cloudflaredPath)
+      : null;
+
+    if (dnsState?.matches) {
+      s3.stop(`DNS already points to ${fullDomain}`);
+    } else if (
+      tokenInfo
+      && dnsState?.zoneId
+      && dnsState.record?.id
+      && dnsState.staleTunnelId
+    ) {
+      s3.stop("Stale DNS record found.");
+
+      const replace = await confirm({
+        message: `${fullDomain} points to a deleted tunnel target. Replace the stale DNS record?`,
+        initialValue: true,
+      });
+      handleCancel(replace);
+
+      if (!replace) {
+        cancel("Cancelled. Choose a different subdomain or remove the stale DNS record in Cloudflare.");
+        process.exit(0);
+      }
+
+      const s3b = spinner();
+      s3b.start(`Replacing stale DNS record for ${fullDomain}...`);
+      const removed = await deleteCloudflareDnsRecord(
+        dnsState.zoneId,
+        tokenInfo.apiToken,
+        dnsState.record.id,
+      );
+      const rerouted = removed && routeTunnelDns(cloudflaredPath, tunnelId, fullDomain);
+      if (rerouted) {
+        s3b.stop(`DNS ready: ${fullDomain}`);
+      } else {
+        s3b.stop("Failed.");
+        if (!reusedExistingTunnel) {
+          const cleanedUp = deletePersistentTunnel(cloudflaredPath, tunnelId);
+          cancel(
+            cleanedUp
+              ? `Failed to replace the stale DNS record for ${fullDomain}. The newly created tunnel was removed.`
+              : `Failed to replace the stale DNS record for ${fullDomain}. The created tunnel (${tunnelId}) may need manual cleanup.`,
+          );
+        } else {
+          cancel(
+            `Failed to replace the stale DNS record for ${fullDomain}. The existing remote tunnel was left unchanged.`,
+          );
+        }
+        process.exit(1);
+      }
+    } else {
+      s3.stop("Failed.");
+      if (!reusedExistingTunnel) {
+        const cleanedUp = deletePersistentTunnel(cloudflaredPath, tunnelId);
+        cancel(
+          cleanedUp
+            ? `Failed to set up DNS for ${fullDomain}. The newly created tunnel was removed.`
+            : `Failed to set up DNS for ${fullDomain}. The created tunnel (${tunnelId}) may need manual cleanup.`,
+        );
+      } else {
+        cancel(
+          `Failed to set up DNS for ${fullDomain}. An existing DNS record may already be using that hostname, or the record does not point to tunnel ${tunnelId}.`,
+        );
+      }
+      process.exit(1);
+    }
   }
 
-  const s4 = spinner();
-  s4.start(`Verifying ${fullDomain}...`);
-  const ready = await waitForTunnelReady(`https://${fullDomain}`);
-  if (!ready) {
-    s4.stop("Failed.");
-    const cleanedUp = deletePersistentTunnel(cloudflaredPath, tunnelId);
-    cancel(
-      cleanedUp
-        ? `DNS was created, but ${fullDomain} did not become reachable within 30s. The new tunnel was removed and no config was saved.`
-        : `DNS was created, but ${fullDomain} did not become reachable within 30s. The created tunnel (${tunnelId}) may need manual cleanup.`,
+  if (tokenInfo) {
+    const s4 = spinner();
+    s4.start(`Verifying DNS target for ${fullDomain}...`);
+    const dnsReady = await dnsRouteAlreadyPointsToTunnel(tokenInfo, domain, fullDomain, tunnelId);
+    if (!dnsReady) {
+      s4.stop("Failed.");
+      if (!reusedExistingTunnel) {
+        const cleanedUp = deletePersistentTunnel(cloudflaredPath, tunnelId);
+        cancel(
+          cleanedUp
+            ? `DNS was configured, but ${fullDomain} could not be confirmed as pointing to tunnel ${tunnelId}. The new tunnel was removed and no config was saved.`
+            : `DNS was configured, but ${fullDomain} could not be confirmed as pointing to tunnel ${tunnelId}. The created tunnel may need manual cleanup.`,
+        );
+      } else {
+        cancel(
+          `DNS was configured, but ${fullDomain} could not be confirmed as pointing to tunnel ${tunnelId}. The existing remote tunnel was left unchanged.`,
+        );
+      }
+      process.exit(1);
+    }
+    s4.stop(`${fullDomain} points to tunnel ${tunnelId}.`);
+  } else {
+    note(
+      `Cloudflare DNS was configured for ${fullDomain}, but Termi could not verify the target via the Cloudflare API.`,
+      "DNS Verification",
     );
-    process.exit(1);
   }
-  s4.stop(`${fullDomain} is reachable.`);
 
   const config: TermiSavedConfig = {
     tunnel: {
@@ -215,6 +328,48 @@ async function setupPersistentTunnel(cloudflaredPath: string): Promise<TermiSave
   note(`Saved to ${configDir()}/config.json`, "Config");
 
   return config;
+}
+
+async function dnsRouteAlreadyPointsToTunnel(
+  tokenInfo: NonNullable<ReturnType<typeof parseCertToken>>,
+  zoneName: string,
+  fullDomain: string,
+  tunnelId: string,
+): Promise<boolean> {
+  const dnsState = await inspectDnsRoute(tokenInfo, zoneName, fullDomain, tunnelId);
+  return dnsState?.matches ?? false;
+}
+
+async function inspectDnsRoute(
+  tokenInfo: NonNullable<ReturnType<typeof parseCertToken>>,
+  zoneName: string,
+  fullDomain: string,
+  tunnelId: string,
+  cloudflaredPath?: string,
+): Promise<{
+  zoneId: string | null;
+  record: Awaited<ReturnType<typeof fetchCloudflareDnsRecord>>;
+  matches: boolean;
+  staleTunnelId: string | null;
+} | null> {
+  const zoneId = await fetchCloudflareZoneId(tokenInfo.accountID, tokenInfo.apiToken, zoneName);
+  if (!zoneId) {
+    return null;
+  }
+
+  const record = await fetchCloudflareDnsRecord(zoneId, tokenInfo.apiToken, fullDomain);
+  const matches = dnsRecordMatchesTunnel(record, tunnelId);
+  const recordTunnelId = parseTunnelIdFromDnsTarget(record);
+  const staleTunnelId = cloudflaredPath && recordTunnelId && !matches
+    ? findPersistentTunnelById(cloudflaredPath, recordTunnelId) ? null : recordTunnelId
+    : null;
+
+  return {
+    zoneId,
+    record,
+    matches,
+    staleTunnelId,
+  };
 }
 
 export interface WizardResult {
