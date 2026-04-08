@@ -4,8 +4,46 @@ import { spawnPty } from "../pty-manager.js";
 import { startServer } from "../server.js";
 import { startTunnel, startNamedTunnel, TunnelHandle } from "../tunnel.js";
 import { printBanner, printSessionInfo } from "../display.js";
-import { BRAND } from "../constants.js";
 import { getVersion } from "../version.js";
+import {
+  attachLocalTerminalInput,
+  createBufferedOutputBridge,
+  createSessionCleanup,
+} from "../session.js";
+
+async function openRemoteTunnel(
+  config: Awaited<ReturnType<typeof runWizard>>,
+  port: number,
+): Promise<TunnelHandle> {
+  if (config.mode === "persistent" && config.savedConfig) {
+    return startNamedTunnel(
+      config.cloudflaredPath,
+      config.savedConfig.tunnel.id,
+      config.savedConfig.tunnel.domain,
+      port,
+    );
+  }
+
+  return startTunnel(config.cloudflaredPath, port);
+}
+
+function getTunnelSpinnerMessage(config: Awaited<ReturnType<typeof runWizard>>): string {
+  return config.mode === "persistent" && config.savedConfig
+    ? "Connecting tunnel..."
+    : "Opening tunnel (waiting for DNS)...";
+}
+
+function getTunnelSuccessMessage(config: Awaited<ReturnType<typeof runWizard>>): string {
+  return config.mode === "persistent" && config.savedConfig
+    ? "Tunnel connected."
+    : "Tunnel ready.";
+}
+
+function getTunnelFailureMessage(config: Awaited<ReturnType<typeof runWizard>>): string {
+  return config.mode === "persistent" && config.savedConfig
+    ? "Failed to connect tunnel"
+    : "Failed to start tunnel";
+}
 
 export async function startCommand(): Promise<void> {
   const version = getVersion();
@@ -16,109 +54,37 @@ export async function startCommand(): Promise<void> {
   const cols = process.stdout.columns || 80;
   const rows = process.stdout.rows || 24;
   const pty = spawnPty(config.shell, cols, rows);
-
-  // Buffer PTY output during setup so we don't lose the initial prompt
-  const earlyBuffer: string[] = [];
-  let attached = false;
-  pty.onData((data) => {
-    if (attached) {
-      process.stdout.write(data);
-    } else {
-      earlyBuffer.push(data);
-    }
-  });
+  const outputBridge = createBufferedOutputBridge(pty);
 
   const server = await startServer(pty, config.token, config.port);
 
   let tunnel: TunnelHandle | undefined;
-  let url: string;
-
-  if (config.mode === "persistent" && config.savedConfig) {
-    const s = spinner();
-    s.start("Connecting tunnel...");
-    try {
-      tunnel = await startNamedTunnel(
-        config.cloudflaredPath,
-        config.savedConfig.tunnel.id,
-        config.savedConfig.tunnel.domain,
-        server.port,
-      );
-      s.stop("Tunnel connected.");
-      url = `${tunnel.url}/?t=${config.token}`;
-    } catch (err) {
-      s.stop("Tunnel failed.");
-      console.error(
-        `\n  Failed to connect tunnel: ${err instanceof Error ? err.message : err}`,
-      );
+  const tunnelSpinner = spinner();
+  tunnelSpinner.start(getTunnelSpinnerMessage(config));
+  try {
+    tunnel = await openRemoteTunnel(config, server.port);
+    tunnelSpinner.stop(getTunnelSuccessMessage(config));
+  } catch (err) {
+    tunnelSpinner.stop("Tunnel failed.");
+    console.error(
+      `\n  ${getTunnelFailureMessage(config)}: ${err instanceof Error ? err.message : err}`,
+    );
+    if (config.mode === "persistent" && config.savedConfig) {
       console.error("  Run 'termi reset' to reconfigure.\n");
-      process.exit(1);
     }
-  } else {
-    const s = spinner();
-    s.start("Opening tunnel (waiting for DNS)...");
-    try {
-      tunnel = await startTunnel(config.cloudflaredPath, server.port);
-      s.stop("Tunnel ready.");
-      url = `${tunnel.url}/?t=${config.token}`;
-    } catch (err) {
-      s.stop("Tunnel failed.");
-      console.error(
-        `\n  Failed to start tunnel: ${err instanceof Error ? err.message : err}`,
-      );
-      process.exit(1);
-    }
+    process.exit(1);
   }
+  const url = `${tunnel.url}/?t=${config.token}`;
 
   printBanner(version);
   printSessionInfo(url, config.mode === "persistent" ? "persistent" : "tunnel");
 
-  let cleanedUp = false;
-  function cleanup() {
-    if (cleanedUp) {
-      return;
-    }
-    cleanedUp = true;
-    process.removeListener("SIGINT", cleanup);
-    process.removeListener("SIGTERM", cleanup);
-
-    if (process.stdin.isTTY && process.stdin.isRaw) {
-      process.stdin.setRawMode(false);
-    }
-    process.stdin.pause();
-    console.log(`\n  ${BRAND} Session ended.\n`);
-    try {
-      pty.kill();
-    } catch {}
-    try {
-      server.close();
-    } catch {}
-    try {
-      tunnel?.kill();
-    } catch {}
-    process.exit(0);
-  }
+  const detachLocalInput = attachLocalTerminalInput(pty);
+  const cleanup = createSessionCleanup(pty, server, detachLocalInput, () => tunnel);
 
   process.on("SIGINT", cleanup);
   process.on("SIGTERM", cleanup);
   pty.onExit(() => cleanup());
 
-  // Flush buffered output and go live
-  attached = true;
-  for (const chunk of earlyBuffer) {
-    process.stdout.write(chunk);
-  }
-
-  if (process.stdin.isTTY) {
-    process.stdin.setRawMode(true);
-  }
-  process.stdin.resume();
-  process.stdin.on("data", (data) => {
-    pty.write(data.toString());
-  });
-
-  process.stdout.on("resize", () => {
-    const c = process.stdout.columns || 80;
-    const r = process.stdout.rows || 24;
-    pty.resize(c, r);
-  });
+  outputBridge.attach();
 }

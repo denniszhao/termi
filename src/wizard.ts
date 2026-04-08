@@ -9,10 +9,6 @@ import {
   note,
 } from "@clack/prompts";
 import chalk from "chalk";
-import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
 import { BRAND, DEFAULT_PORT } from "./constants.js";
 import { generateToken } from "./auth.js";
 import {
@@ -20,14 +16,19 @@ import {
   downloadCloudflared,
 } from "./cloudflared-installer.js";
 import {
-  copySecureFile,
   loadConfig,
   saveConfig,
   configDir,
   certPath,
-  credentialsPath,
 } from "./config.js";
 import type { TermiSavedConfig } from "./types.js";
+import {
+  createPersistentTunnel,
+  ensureCloudflareAuth,
+  fetchCloudflareDomains,
+  parseCertToken,
+  routeTunnelDns,
+} from "./cloudflare.js";
 
 function handleCancel<T>(value: T): asserts value is Exclude<T, symbol> {
   if (isCancel(value)) {
@@ -73,82 +74,19 @@ async function ensureCloudflared(): Promise<string> {
   }
 }
 
-function parseCertToken(certFile: string): { accountID: string; apiToken: string } | null {
-  try {
-    const pem = readFileSync(certFile, "utf-8");
-    const match = pem.match(
-      /-----BEGIN ARGO TUNNEL TOKEN-----\n([\s\S]*?)\n-----END ARGO TUNNEL TOKEN-----/,
-    );
-    if (!match) return null;
-    const json = JSON.parse(Buffer.from(match[1].trim(), "base64").toString());
-    if (json.accountID && json.apiToken) {
-      return { accountID: json.accountID, apiToken: json.apiToken };
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-async function fetchCloudflareDomains(
-  accountID: string,
-  apiToken: string,
-): Promise<string[]> {
-  try {
-    const res = await fetch(
-      `https://api.cloudflare.com/client/v4/zones?account.id=${accountID}&status=active&per_page=50`,
-      {
-        headers: {
-          Authorization: `Bearer ${apiToken}`,
-          "Content-Type": "application/json",
-        },
-        signal: AbortSignal.timeout(10_000),
-      },
-    );
-    if (!res.ok) return [];
-    const data = await res.json() as { result?: { name: string }[] };
-    return (data.result || []).map((z) => z.name);
-  } catch {
-    return [];
-  }
-}
-
-async function ensureAuth(cloudflaredPath: string): Promise<void> {
-  const cert = certPath();
-  if (existsSync(cert)) return;
-
-  // cloudflared login always writes to ~/.cloudflared/cert.pem
-  // We run login, then copy the cert to ~/.termi/
-  const defaultCert = join(homedir(), ".cloudflared", "cert.pem");
-  const hadExistingCert = existsSync(defaultCert);
-
+async function setupPersistentTunnel(cloudflaredPath: string): Promise<TermiSavedConfig> {
   note(
     "You'll be asked to log into your Cloudflare account.\nThis authorizes Termi to create a tunnel on your domain.",
     "Cloudflare Auth",
   );
 
-  const result = spawnSync(cloudflaredPath, ["login"], {
-    stdio: "inherit",
-  });
-
-  if (result.status !== 0 || !existsSync(defaultCert)) {
-    cancel("cloudflared login failed. Please try again.");
+  try {
+    ensureCloudflareAuth(cloudflaredPath);
+  } catch (err) {
+    cancel(err instanceof Error ? err.message : String(err));
     process.exit(1);
   }
 
-  copySecureFile(defaultCert, cert);
-
-  // Clean up if we created the default cert (don't pollute ~/.cloudflared/)
-  if (!hadExistingCert) {
-    try { unlinkSync(defaultCert); } catch {}
-  }
-}
-
-async function setupPersistentTunnel(cloudflaredPath: string): Promise<TermiSavedConfig> {
-  // Step 1: Auth first
-  await ensureAuth(cloudflaredPath);
-
-  // Step 2: Parse cert and fetch domains from Cloudflare API
   const cert = certPath();
   const tokenInfo = parseCertToken(cert);
   let domain: string;
@@ -198,7 +136,6 @@ async function setupPersistentTunnel(cloudflaredPath: string): Promise<TermiSave
     domain = String(typed);
   }
 
-  // Step 3: Subdomain
   const defaultSub = `termi-${randomDigits(3)}`;
   const subdomain = await text({
     message: "Subdomain?",
@@ -220,57 +157,27 @@ async function setupPersistentTunnel(cloudflaredPath: string): Promise<TermiSave
     process.exit(0);
   }
 
-  // Step 2: Create tunnel
-  const cred = credentialsPath();
   const tunnelName = String(subdomain);
   const s2 = spinner();
   s2.start("Creating tunnel...");
-
-  const createResult = spawnSync(
-    cloudflaredPath,
-    ["tunnel", "--origincert", cert, "--credentials-file", cred, "create", tunnelName],
-    { encoding: "utf-8" },
-  );
-
-  if (createResult.status !== 0) {
+  let tunnelId: string;
+  try {
+    tunnelId = createPersistentTunnel(cloudflaredPath, tunnelName);
+    s2.stop("Tunnel created.");
+  } catch (err) {
     s2.stop("Failed.");
-    const stderr = createResult.stderr || "";
-    if (stderr.includes("already exists")) {
-      cancel(`Tunnel named "${tunnelName}" already exists. Run 'termi reset' and try a different subdomain.`);
-    } else {
-      cancel(`Failed to create tunnel: ${stderr}`);
-    }
+    cancel(err instanceof Error ? err.message : String(err));
     process.exit(1);
   }
 
-  // Parse tunnel ID from output
-  const output = (createResult.stdout || "") + (createResult.stderr || "");
-  const idMatch = output.match(/with id ([a-f0-9-]+)/);
-  if (!idMatch) {
-    s2.stop("Failed.");
-    cancel("Could not parse tunnel ID from cloudflared output.");
-    process.exit(1);
-  }
-  const tunnelId = idMatch[1];
-  s2.stop("Tunnel created.");
-
-  // Step 3: Route DNS
   const s3 = spinner();
   s3.start(`Setting up DNS for ${fullDomain}...`);
-  const routeResult = spawnSync(
-    cloudflaredPath,
-    ["tunnel", "--origincert", cert, "route", "dns", tunnelId, fullDomain],
-    { encoding: "utf-8" },
-  );
-
-  if (routeResult.status !== 0) {
+  if (!routeTunnelDns(cloudflaredPath, tunnelId, fullDomain)) {
     s3.stop("Warning: DNS routing may have failed.");
-    // Don't exit — the tunnel might still work if DNS was already set up
   } else {
     s3.stop(`DNS ready: ${fullDomain}`);
   }
 
-  // Save config
   const config: TermiSavedConfig = {
     tunnel: {
       id: tunnelId,

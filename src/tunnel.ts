@@ -11,7 +11,7 @@ export interface TunnelHandle {
 
 const URL_RE = /https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/;
 
-function parseTunnelUrl(line: string): string | null {
+export function parseTunnelUrl(line: string): string | null {
   try {
     const parsed = JSON.parse(line);
     const match = parsed.message?.match(URL_RE);
@@ -22,7 +22,7 @@ function parseTunnelUrl(line: string): string | null {
   }
 }
 
-async function waitForTunnelReady(url: string, timeoutMs = 30_000): Promise<void> {
+export async function waitForTunnelReady(url: string, timeoutMs = 30_000): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
@@ -34,6 +34,48 @@ async function waitForTunnelReady(url: string, timeoutMs = 30_000): Promise<void
     await new Promise((r) => setTimeout(r, 2000));
   }
   // Don't throw — the tunnel might still work, DNS might just be slow
+}
+
+function attachTunnelOutput(
+  proc: ReturnType<typeof spawn>,
+  onLine: (line: string) => void,
+): void {
+  if (proc.stdout) {
+    createInterface({ input: proc.stdout }).on("line", onLine);
+  }
+  if (proc.stderr) {
+    createInterface({ input: proc.stderr }).on("line", onLine);
+  }
+}
+
+function createTunnelHandle(proc: ReturnType<typeof spawn>, url: string): TunnelHandle {
+  return {
+    url,
+    kill: () => proc.kill("SIGTERM"),
+  };
+}
+
+function rejectIfExitedBeforeReady(
+  proc: ReturnType<typeof spawn>,
+  onReject: (err: Error) => void,
+  isResolved: () => boolean,
+  clearTimeoutFn: () => void,
+): void {
+  proc.on("error", (err) => {
+    if (!isResolved()) {
+      clearTimeoutFn();
+      onReject(err);
+    }
+  });
+
+  proc.on("exit", (code) => {
+    if (!isResolved()) {
+      clearTimeoutFn();
+      onReject(new Error(`cloudflared exited with code ${code}`));
+    } else {
+      console.error(`\n  Warning: cloudflared exited unexpectedly (code ${code})`);
+    }
+  });
 }
 
 export function startNamedTunnel(
@@ -62,12 +104,11 @@ export function startNamedTunnel(
       { stdio: ["ignore", "pipe", "pipe"] },
     );
 
+    let resolved = false;
     const timeout = setTimeout(() => {
       proc.kill("SIGTERM");
       reject(new Error("Timed out waiting for tunnel connection (30s)"));
     }, 30_000);
-
-    let resolved = false;
 
     function handleLine(line: string) {
       if (resolved) return;
@@ -76,36 +117,13 @@ export function startNamedTunnel(
         clearTimeout(timeout);
         const url = `https://${domain}`;
         waitForTunnelReady(url).then(() => {
-          resolve({
-            url,
-            kill: () => proc.kill("SIGTERM"),
-          });
+          resolve(createTunnelHandle(proc, url));
         });
       }
     }
 
-    if (proc.stdout) {
-      createInterface({ input: proc.stdout }).on("line", handleLine);
-    }
-    if (proc.stderr) {
-      createInterface({ input: proc.stderr }).on("line", handleLine);
-    }
-
-    proc.on("error", (err) => {
-      if (!resolved) {
-        clearTimeout(timeout);
-        reject(err);
-      }
-    });
-
-    proc.on("exit", (code) => {
-      if (!resolved) {
-        clearTimeout(timeout);
-        reject(new Error(`cloudflared exited with code ${code}`));
-      } else {
-        console.error(`\n  Warning: cloudflared exited unexpectedly (code ${code})`);
-      }
-    });
+    attachTunnelOutput(proc, handleLine);
+    rejectIfExitedBeforeReady(proc, reject, () => resolved, () => clearTimeout(timeout));
   });
 }
 
@@ -126,12 +144,11 @@ export function startTunnel(
       { stdio: ["ignore", "pipe", "pipe"] },
     );
 
+    let resolved = false;
     const timeout = setTimeout(() => {
       proc.kill("SIGTERM");
       reject(new Error("Timed out waiting for tunnel URL (30s)"));
     }, 30_000);
-
-    let resolved = false;
 
     function handleLine(line: string) {
       if (resolved) return;
@@ -139,37 +156,13 @@ export function startTunnel(
       if (url) {
         resolved = true;
         clearTimeout(timeout);
-        // Wait for DNS to propagate before returning the URL
         waitForTunnelReady(url).then(() => {
-          resolve({
-            url,
-            kill: () => proc.kill("SIGTERM"),
-          });
+          resolve(createTunnelHandle(proc, url));
         });
       }
     }
 
-    if (proc.stdout) {
-      createInterface({ input: proc.stdout }).on("line", handleLine);
-    }
-    if (proc.stderr) {
-      createInterface({ input: proc.stderr }).on("line", handleLine);
-    }
-
-    proc.on("error", (err) => {
-      if (!resolved) {
-        clearTimeout(timeout);
-        reject(err);
-      }
-    });
-
-    proc.on("exit", (code) => {
-      if (!resolved) {
-        clearTimeout(timeout);
-        reject(new Error(`cloudflared exited with code ${code}`));
-      } else {
-        console.error(`\n  Warning: cloudflared exited unexpectedly (code ${code})`);
-      }
-    });
+    attachTunnelOutput(proc, handleLine);
+    rejectIfExitedBeforeReady(proc, reject, () => resolved, () => clearTimeout(timeout));
   });
 }
