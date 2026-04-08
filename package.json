@@ -1,0 +1,28 @@
+{
+  "name": "termi",
+  "version": "0.1.0",
+  "description": "View and control a terminal session from your phone",
+  "type": "module",
+  "bin": {
+    "termi": "./dist/cli.mjs"
+  },
+  "scripts": {
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true",
+    "build": "node build.mjs",
+    "dev": "node build.mjs --watch",
+    "start": "node dist/cli.mjs start"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.9",
+    "chalk": "^5.4",
+    "node-pty": "^1.0",
+    "qrcode-terminal": "^0.12",
+    "ws": "^8.18"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/ws": "^8",
+    "esbuild": "^0.25",
+    "typescript": "^5.7"
+  }
+}
