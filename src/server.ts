@@ -3,6 +3,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { PtyHandle } from "./pty-manager.js";
 import { validateToken } from "./auth.js";
 import { getHtml } from "./html.js";
+import { icon192, favicon96, faviconIco, manifest } from "./assets.js";
 import type { WsClientMessage } from "./types.js";
 
 export interface ServerHandle {
@@ -24,6 +25,30 @@ export function startServer(
     if (url.pathname === "/health") {
       res.writeHead(200);
       res.end("ok");
+      return;
+    }
+
+    if (url.pathname === "/icon-192.png") {
+      res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" });
+      res.end(icon192);
+      return;
+    }
+
+    if (url.pathname === "/favicon-96x96.png") {
+      res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" });
+      res.end(favicon96);
+      return;
+    }
+
+    if (url.pathname === "/favicon.ico") {
+      res.writeHead(200, { "Content-Type": "image/x-icon", "Cache-Control": "public, max-age=86400" });
+      res.end(faviconIco);
+      return;
+    }
+
+    if (url.pathname === "/manifest.json") {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "public, max-age=86400" });
+      res.end(manifest);
       return;
     }
 
