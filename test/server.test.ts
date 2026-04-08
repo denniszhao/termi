@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import net from "node:net";
 import WebSocket from "ws";
 import { startServer } from "../src/server.ts";
 import { createPairingManager } from "../src/pairing.ts";
@@ -39,10 +40,37 @@ class FakePty implements PtyHandle {
   }
 }
 
+function sendRawHttp(port: number, request: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ host: "127.0.0.1", port });
+    let response = "";
+
+    socket.setEncoding("utf8");
+    socket.on("connect", () => {
+      socket.write(request);
+    });
+    socket.on("data", (chunk) => {
+      response += chunk;
+    });
+    socket.on("end", () => {
+      resolve(response);
+    });
+    socket.on("error", reject);
+  });
+}
+
 test("server serves health and protects the session page with a token", { skip: !runServerTests }, async () => {
   const pty = new FakePty();
   const token = "secret-token";
-  const server = await startServer(pty, { mode: "token", token }, 0);
+  let mobileOnboardingSeen = false;
+  const server = await startServer(pty, {
+    mode: "token",
+    token,
+    mobileOnboardingSeen,
+    onMobileOnboardingSeen: () => {
+      mobileOnboardingSeen = true;
+    },
+  }, 0);
 
   try {
     const health = await fetch(`http://127.0.0.1:${server.port}/health`);
@@ -63,7 +91,12 @@ test("server serves health and protects the session page with a token", { skip: 
 test("server replays PTY output and forwards websocket input", { skip: !runServerTests }, async () => {
   const pty = new FakePty();
   const token = "secret-token";
-  const server = await startServer(pty, { mode: "token", token }, 0);
+  const server = await startServer(pty, {
+    mode: "token",
+    token,
+    mobileOnboardingSeen: false,
+    onMobileOnboardingSeen: () => {},
+  }, 0);
 
   try {
     pty.emitData("history line\r\n");
@@ -96,7 +129,9 @@ test("server replays PTY output and forwards websocket input", { skip: !runServe
 test("persistent mode pairs a browser and then allows websocket access", { skip: !runServerTests }, async () => {
   const pty = new FakePty();
   const pairing = createPairingManager();
-  let trustedDevices: Array<{ id: string; secretHash: string; createdAt: string; lastSeenAt: string }> = [];
+  const pairingRequests: string[] = [];
+  let trustedSessionReadyCount = 0;
+  let trustedDevices: Array<{ id: string; secretHash: string; createdAt: string; lastSeenAt: string; label?: string }> = [];
   const server = await startServer(
     pty,
     {
@@ -106,6 +141,14 @@ test("persistent mode pairs a browser and then allows websocket access", { skip:
       onTrustedDevicesChange: (nextTrustedDevices) => {
         trustedDevices = nextTrustedDevices;
       },
+      onPairingRequired: (code) => {
+        pairingRequests.push(code);
+      },
+      onTrustedSessionReady: () => {
+        trustedSessionReadyCount += 1;
+      },
+      mobileOnboardingSeen: false,
+      onMobileOnboardingSeen: () => {},
     },
     0,
   );
@@ -114,6 +157,7 @@ test("persistent mode pairs a browser and then allows websocket access", { skip:
     const pairingPage = await fetch(`http://127.0.0.1:${server.port}/`);
     assert.equal(pairingPage.status, 200);
     assert.match(await pairingPage.text(), /Pair This Browser/);
+    assert.deepEqual(pairingRequests, [pairing.getCode()]);
 
     const pairResponse = await fetch(`http://127.0.0.1:${server.port}/pair`, {
       method: "POST",
@@ -129,6 +173,7 @@ test("persistent mode pairs a browser and then allows websocket access", { skip:
     const cookie = pairResponse.headers.get("set-cookie");
     assert.ok(cookie);
     assert.equal(trustedDevices.length, 1);
+    assert.equal(trustedDevices[0]?.label, "Unknown browser");
 
     const trustedPage = await fetch(`http://127.0.0.1:${server.port}/`, {
       headers: {
@@ -137,6 +182,8 @@ test("persistent mode pairs a browser and then allows websocket access", { skip:
     });
     assert.equal(trustedPage.status, 200);
     assert.match(await trustedPage.text(), /<title>Termi<\/title>/);
+    assert.deepEqual(pairingRequests, [pairingRequests[0]!]);
+    assert.equal(trustedSessionReadyCount, 1);
 
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`, {
       headers: {
@@ -146,6 +193,134 @@ test("persistent mode pairs a browser and then allows websocket access", { skip:
     });
     await once(ws, "open");
     ws.close();
+  } finally {
+    server.close();
+  }
+});
+
+test("server returns 400 for malformed request hosts without crashing", { skip: !runServerTests }, async () => {
+  const pty = new FakePty();
+  const token = "secret-token";
+  const server = await startServer(pty, {
+    mode: "token",
+    token,
+    mobileOnboardingSeen: false,
+    onMobileOnboardingSeen: () => {},
+  }, 0);
+
+  try {
+    const response = await sendRawHttp(
+      server.port,
+      `GET /?t=${token} HTTP/1.1\r\nHost: [\r\nConnection: close\r\n\r\n`,
+    );
+    assert.match(response, /^HTTP\/1\.1 200 OK/m);
+
+    const health = await fetch(`http://127.0.0.1:${server.port}/health`);
+    assert.equal(health.status, 200);
+  } finally {
+    server.close();
+  }
+});
+
+test("persistent mode ignores malformed trusted-device cookies", { skip: !runServerTests }, async () => {
+  const pty = new FakePty();
+  const pairing = createPairingManager();
+  const server = await startServer(
+    pty,
+    {
+      mode: "trusted-browser",
+      pairing,
+      trustedDevices: [],
+      onTrustedDevicesChange: () => {},
+      onPairingRequired: () => {},
+      onTrustedSessionReady: () => {},
+      mobileOnboardingSeen: false,
+      onMobileOnboardingSeen: () => {},
+    },
+    0,
+  );
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/`, {
+      headers: {
+        Cookie: "__Host-termi_trust=%E0%A4%A",
+      },
+    });
+
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /Pair This Browser/);
+  } finally {
+    server.close();
+  }
+});
+
+test("server rejects oversized websocket messages and ignores invalid resize payloads", { skip: !runServerTests }, async () => {
+  const pty = new FakePty();
+  const token = "secret-token";
+  const server = await startServer(pty, {
+    mode: "token",
+    token,
+    mobileOnboardingSeen: false,
+    onMobileOnboardingSeen: () => {},
+  }, 0);
+
+  try {
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/?t=${token}`);
+    await once(ws, "open");
+    ws.on("error", () => {});
+
+    ws.send(JSON.stringify({ type: "resize", cols: 120, rows: 40 }));
+    ws.send(JSON.stringify({ type: "resize", cols: -1, rows: 9999 }));
+    ws.send(JSON.stringify({ type: "data", data: 123 }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assert.deepEqual(pty.resizes, [{ cols: 120, rows: 40 }]);
+    assert.deepEqual(pty.writes, []);
+
+    ws.send(JSON.stringify({ type: "data", data: "x".repeat(70 * 1024) }));
+    const [code] = await once(ws, "close");
+    assert.notEqual(code, 1000);
+    assert.deepEqual(pty.writes, []);
+  } finally {
+    server.close();
+  }
+});
+
+test("server only shows onboarding for mobile until it is acknowledged", { skip: !runServerTests }, async () => {
+  const pty = new FakePty();
+  const token = "secret-token";
+  let mobileOnboardingSeen = false;
+  const server = await startServer(pty, {
+    mode: "token",
+    token,
+    mobileOnboardingSeen,
+    onMobileOnboardingSeen: () => {
+      mobileOnboardingSeen = true;
+    },
+  }, 0);
+
+  try {
+    const mobilePage = await fetch(`http://127.0.0.1:${server.port}/?t=${token}`, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+      },
+    });
+    const html = await mobilePage.text();
+    assert.match(html, /"showOnboarding":true/);
+    assert.match(html, /"onboardingSeenPath":"\/onboarding\/seen\?t=secret-token"/);
+
+    const ack = await fetch(`http://127.0.0.1:${server.port}/onboarding/seen?t=${token}`, {
+      method: "POST",
+    });
+    assert.equal(ack.status, 204);
+    assert.equal(mobileOnboardingSeen, true);
+
+    const seenPage = await fetch(`http://127.0.0.1:${server.port}/?t=${token}`, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+      },
+    });
+    assert.match(await seenPage.text(), /"showOnboarding":false/);
   } finally {
     server.close();
   }

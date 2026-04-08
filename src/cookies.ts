@@ -13,7 +13,11 @@ export function parseCookies(header: string | undefined): Record<string, string>
     }
     const key = entry.slice(0, index).trim();
     const value = entry.slice(index + 1).trim();
-    cookies[key] = decodeURIComponent(value);
+    try {
+      cookies[key] = decodeURIComponent(value);
+    } catch {
+      // Ignore malformed cookie values instead of failing the entire request.
+    }
   }
 
   return cookies;
@@ -29,4 +33,3 @@ export function serializeCookie(name: string, value: string, maxAgeSeconds: numb
     "Secure",
   ].join("; ");
 }
-

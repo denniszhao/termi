@@ -1,7 +1,8 @@
 import type { TrustedDevice } from "./types.js";
 
 export function formatTrustedDevice(device: TrustedDevice): string {
-  return `${shortTrustedDeviceId(device.id)}  last seen ${formatTrustedDeviceTime(device.lastSeenAt)}  created ${formatTrustedDeviceTime(device.createdAt)}`;
+  const label = device.label ? `${device.label}  ` : "";
+  return `${label}${shortTrustedDeviceId(device.id)}  last seen ${formatTrustedDeviceTime(device.lastSeenAt)}  created ${formatTrustedDeviceTime(device.createdAt)}`;
 }
 
 function shortTrustedDeviceId(id: string): string {

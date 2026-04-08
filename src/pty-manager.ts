@@ -24,7 +24,7 @@ export function spawnPty(shell?: string, cols = 80, rows = 24): PtyHandle {
 
   // Set a cleaner prompt if the user doesn't have one customized
   if (!env.PS1 || env.PS1 === "\\s-\\v\\$ ") {
-    env.PS1 = "\\[\\033[1;36m\\]\\W\\[\\033[0m\\] \\$ ";
+    env.PS1 = "\\[\\033[1;36m\\]\\w\\[\\033[0m\\] \\$ ";
   }
 
   const proc = pty.spawn(resolvedShell, [], {

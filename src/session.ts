@@ -3,13 +3,34 @@ import type { PtyHandle } from "./pty-manager.js";
 import type { ServerHandle } from "./server.js";
 import type { TunnelHandle } from "./tunnel.js";
 
+const EARLY_OUTPUT_LIMIT_BYTES = 512 * 1024;
+
 export interface BufferedOutputBridge {
   attach(): void;
 }
 
 export function createBufferedOutputBridge(pty: PtyHandle): BufferedOutputBridge {
   const earlyBuffer: string[] = [];
+  let earlyBufferBytes = 0;
   let attached = false;
+
+  function trimEarlyBuffer(): void {
+    while (earlyBufferBytes > EARLY_OUTPUT_LIMIT_BYTES && earlyBuffer.length > 0) {
+      const overflow = earlyBufferBytes - EARLY_OUTPUT_LIMIT_BYTES;
+      const first = earlyBuffer[0]!;
+      const firstBytes = Buffer.byteLength(first);
+
+      if (firstBytes <= overflow) {
+        earlyBuffer.shift();
+        earlyBufferBytes -= firstBytes;
+        continue;
+      }
+
+      const trimmed = Buffer.from(first).subarray(overflow).toString("utf8");
+      earlyBuffer[0] = trimmed;
+      earlyBufferBytes -= firstBytes - Buffer.byteLength(trimmed);
+    }
+  }
 
   pty.onData((data) => {
     if (attached) {
@@ -17,6 +38,8 @@ export function createBufferedOutputBridge(pty: PtyHandle): BufferedOutputBridge
       return;
     }
     earlyBuffer.push(data);
+    earlyBufferBytes += Buffer.byteLength(data);
+    trimEarlyBuffer();
   });
 
   return {
@@ -25,6 +48,8 @@ export function createBufferedOutputBridge(pty: PtyHandle): BufferedOutputBridge
       for (const chunk of earlyBuffer) {
         process.stdout.write(chunk);
       }
+      earlyBuffer.length = 0;
+      earlyBufferBytes = 0;
     },
   };
 }

@@ -209,6 +209,7 @@ async function setupPersistentTunnel(cloudflaredPath: string): Promise<TermiSave
       domain: fullDomain,
     },
     trustedDevices: [],
+    mobileOnboardingSeen: loadConfig()?.mobileOnboardingSeen ?? false,
   };
   saveConfig(config);
   note(`Saved to ${configDir()}/config.json`, "Config");

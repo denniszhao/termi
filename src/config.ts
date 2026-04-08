@@ -41,6 +41,27 @@ export function saveConfig(config: TermiSavedConfig): void {
   writeSecureFile(CONFIG_PATH, JSON.stringify(normalizeConfig(config), null, 2) + "\n");
 }
 
+export function getMobileOnboardingSeen(): boolean {
+  return loadConfig()?.mobileOnboardingSeen ?? false;
+}
+
+export function markMobileOnboardingSeen(): void {
+  const config = loadConfig();
+  if (config?.mobileOnboardingSeen) {
+    return;
+  }
+
+  saveConfig({
+    tunnel: config?.tunnel ?? {
+      id: "",
+      name: "",
+      domain: "",
+    },
+    trustedDevices: config?.trustedDevices ?? [],
+    mobileOnboardingSeen: true,
+  });
+}
+
 export function listTrustedDevices(): TrustedDevice[] {
   return loadConfig()?.trustedDevices ?? [];
 }
@@ -128,6 +149,7 @@ function normalizeConfig(config: Partial<TermiSavedConfig>): TermiSavedConfig {
       domain: String(config.tunnel?.domain || ""),
     },
     trustedDevices: normalizeTrustedDevices(config.trustedDevices),
+    mobileOnboardingSeen: config.mobileOnboardingSeen === true,
   };
 }
 
@@ -151,6 +173,7 @@ function normalizeTrustedDevices(devices: unknown): TrustedDevice[] {
       secretHash: String(trustedDevice.secretHash),
       createdAt: String(trustedDevice.createdAt || ""),
       lastSeenAt: String(trustedDevice.lastSeenAt || trustedDevice.createdAt || ""),
+      ...(trustedDevice.label ? { label: String(trustedDevice.label) } : {}),
     }];
   });
 }

@@ -27,6 +27,7 @@ test("config persists and resets saved state under the home directory", async ()
       domain: "termi-123.example.com",
     },
     trustedDevices: [],
+    mobileOnboardingSeen: false,
   };
 
   config.saveConfig(saved);
@@ -51,13 +52,14 @@ test("trusted device helpers remove one device or clear them all", async () => {
     secretHash: "hash-a",
     createdAt: "2026-04-08T10:00:00.000Z",
     lastSeenAt: "2026-04-08T10:05:00.000Z",
+    label: "iPhone Safari",
   };
   const deviceB = {
-    id: "device-b",
-    secretHash: "hash-b",
-    createdAt: "2026-04-08T11:00:00.000Z",
-    lastSeenAt: "2026-04-08T11:05:00.000Z",
-  };
+      id: "device-b",
+      secretHash: "hash-b",
+      createdAt: "2026-04-08T11:00:00.000Z",
+      lastSeenAt: "2026-04-08T11:05:00.000Z",
+    };
 
   config.saveConfig({
     tunnel: {
@@ -66,6 +68,7 @@ test("trusted device helpers remove one device or clear them all", async () => {
       domain: "termi-123.example.com",
     },
     trustedDevices: [deviceA, deviceB],
+    mobileOnboardingSeen: false,
   });
 
   assert.deepEqual(config.listTrustedDevices(), [deviceA, deviceB]);
@@ -75,4 +78,17 @@ test("trusted device helpers remove one device or clear them all", async () => {
   assert.equal(config.clearTrustedDevices(), 1);
   assert.deepEqual(config.listTrustedDevices(), []);
   assert.equal(config.clearTrustedDevices(), 0);
+});
+
+test("mobile onboarding state is persisted independently of session mode", async () => {
+  const tempHome = mkdtempSync(join(tmpdir(), "termi-home-"));
+  const config = await importFreshConfigModule(tempHome);
+
+  assert.equal(config.getMobileOnboardingSeen(), false);
+  config.markMobileOnboardingSeen();
+  assert.equal(config.getMobileOnboardingSeen(), true);
+
+  const saved = config.loadConfig();
+  assert.equal(saved?.mobileOnboardingSeen, true);
+  assert.deepEqual(saved?.trustedDevices ?? [], []);
 });

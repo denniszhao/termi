@@ -4,17 +4,19 @@ export interface TerminalSocketController {
   sendResize(cols: number, rows: number): void;
 }
 
+export type TerminalSocketState = "connecting" | "connected" | "reconnecting" | "disconnected";
+
 interface CreateTerminalSocketOptions {
   wsUrl: string;
-  statusEl: HTMLElement;
   onData: (data: string) => void;
   onOpen: () => void;
+  onStateChange: (state: TerminalSocketState) => void;
 }
 
 export function createTerminalSocket(
   options: CreateTerminalSocketOptions,
 ): TerminalSocketController {
-  const { wsUrl, statusEl, onData, onOpen } = options;
+  const { wsUrl, onData, onOpen, onStateChange } = options;
   let ws: WebSocket | undefined;
   let reconnectTimer: number | undefined;
 
@@ -22,6 +24,7 @@ export function createTerminalSocket(
     if (reconnectTimer !== undefined) {
       return;
     }
+    onStateChange("reconnecting");
     reconnectTimer = window.setTimeout(() => {
       reconnectTimer = undefined;
       connect();
@@ -29,11 +32,11 @@ export function createTerminalSocket(
   }
 
   function connect(): void {
+    onStateChange(reconnectTimer === undefined ? "connecting" : "reconnecting");
     ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
-      statusEl.textContent = "Connected";
-      statusEl.classList.add("connected");
+      onStateChange("connected");
       onOpen();
     };
 
@@ -45,8 +48,7 @@ export function createTerminalSocket(
     };
 
     ws.onclose = () => {
-      statusEl.textContent = "Disconnected. Reconnecting...";
-      statusEl.classList.remove("connected");
+      onStateChange("disconnected");
       scheduleReconnect();
     };
 
@@ -69,4 +71,3 @@ export function createTerminalSocket(
     },
   };
 }
-

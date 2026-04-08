@@ -1,17 +1,25 @@
 import { outro, spinner } from "@clack/prompts";
 import { runWizard } from "../wizard.js";
 import { createPairingManager } from "../pairing.js";
+import { createPairingCodeAnnouncer } from "../pairing-announcer.js";
 import { spawnPty } from "../pty-manager.js";
 import { startServer, type ServerAuth } from "../server.js";
 import { startTunnel, startNamedTunnel, TunnelHandle } from "../tunnel.js";
-import { printBanner, printPairingCode, printSessionInfo } from "../display.js";
+import {
+  printBanner,
+  printPairingCode,
+  printPersistentAccessInfo,
+  printSessionInfo,
+  printTrustedBrowserConnected,
+  printWaitingForTrustedBrowser,
+} from "../display.js";
 import { getVersion } from "../version.js";
 import {
   attachLocalTerminalInput,
   createBufferedOutputBridge,
   createSessionCleanup,
 } from "../session.js";
-import { saveConfig } from "../config.js";
+import { getMobileOnboardingSeen, markMobileOnboardingSeen, saveConfig } from "../config.js";
 
 async function openRemoteTunnel(
   config: Awaited<ReturnType<typeof runWizard>>,
@@ -47,16 +55,27 @@ function getTunnelFailureMessage(config: Awaited<ReturnType<typeof runWizard>>):
     : "Failed to start tunnel";
 }
 
-function createServerAuth(config: Awaited<ReturnType<typeof runWizard>>): ServerAuth {
+function createServerAuth(
+  config: Awaited<ReturnType<typeof runWizard>>,
+  onTrustedSessionReady: () => void,
+): ServerAuth {
+  const mobileOnboardingSeen = getMobileOnboardingSeen();
+
   if (config.mode === "persistent" && config.savedConfig) {
-    const pairing = createPairingManager((code) => {
+    const pairingCodeAnnouncer = createPairingCodeAnnouncer((code) => {
       printPairingCode(code);
+    });
+    const pairing = createPairingManager((code, reason) => {
+      if (reason === "expired") {
+        pairingCodeAnnouncer.announce(code);
+      }
     });
 
     return {
       mode: "trusted-browser",
       pairing,
       trustedDevices: config.savedConfig.trustedDevices,
+      mobileOnboardingSeen,
       onTrustedDevicesChange: (trustedDevices) => {
         config.savedConfig = {
           ...config.savedConfig!,
@@ -64,12 +83,23 @@ function createServerAuth(config: Awaited<ReturnType<typeof runWizard>>): Server
         };
         saveConfig(config.savedConfig);
       },
+      onMobileOnboardingSeen: () => {
+        markMobileOnboardingSeen();
+      },
+      onPairingRequired: (code) => {
+        pairingCodeAnnouncer.announce(code);
+      },
+      onTrustedSessionReady,
     };
   }
 
   return {
     mode: "token",
     token: config.token!,
+    mobileOnboardingSeen,
+    onMobileOnboardingSeen: () => {
+      markMobileOnboardingSeen();
+    },
   };
 }
 
@@ -83,8 +113,35 @@ export async function startCommand(): Promise<void> {
   const rows = process.stdout.rows || 24;
   const pty = spawnPty(config.shell, cols, rows);
   const outputBridge = createBufferedOutputBridge(pty);
+  let detachLocalInput = () => {};
+  let localTerminalAttached = false;
+  let localTerminalMayAttach = false;
+  let trustedSessionReady = false;
+  let trustedAttachMessagePrinted = false;
 
-  const serverAuth = createServerAuth(config);
+  function attachLocalTerminal(): void {
+    if (localTerminalAttached) {
+      return;
+    }
+
+    if (config.mode === "persistent" && !trustedAttachMessagePrinted) {
+      trustedAttachMessagePrinted = true;
+      printTrustedBrowserConnected();
+    }
+
+    localTerminalAttached = true;
+    detachLocalInput = attachLocalTerminalInput(pty);
+    outputBridge.attach();
+  }
+
+  function markTrustedSessionReady(): void {
+    trustedSessionReady = true;
+    if (localTerminalMayAttach) {
+      attachLocalTerminal();
+    }
+  }
+
+  const serverAuth = createServerAuth(config, markTrustedSessionReady);
   const server = await startServer(pty, serverAuth, config.port);
 
   let tunnel: TunnelHandle | undefined;
@@ -110,15 +167,19 @@ export async function startCommand(): Promise<void> {
   printBanner(version);
   printSessionInfo(url, config.mode === "persistent" ? "persistent" : "tunnel");
   if (serverAuth.mode === "trusted-browser") {
-    printPairingCode(serverAuth.pairing.getCode());
+    printPersistentAccessInfo(serverAuth.trustedDevices.length > 0);
+    printWaitingForTrustedBrowser();
+    localTerminalMayAttach = true;
+    if (trustedSessionReady) {
+      attachLocalTerminal();
+    }
+  } else {
+    attachLocalTerminal();
   }
 
-  const detachLocalInput = attachLocalTerminalInput(pty);
-  const cleanup = createSessionCleanup(pty, server, detachLocalInput, () => tunnel);
+  const cleanup = createSessionCleanup(pty, server, () => detachLocalInput(), () => tunnel);
 
   process.on("SIGINT", cleanup);
   process.on("SIGTERM", cleanup);
   pty.onExit(() => cleanup());
-
-  outputBridge.attach();
 }

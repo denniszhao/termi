@@ -10,6 +10,7 @@ import {
   TRUSTED_DEVICE_COOKIE,
   addTrustedDevice,
   createTrustedDevice,
+  inferTrustedDeviceLabel,
   touchTrustedDevice,
   verifyTrustedDeviceCookie,
 } from "./trusted-devices.js";
@@ -20,7 +21,10 @@ import type { TrustedDevice, WsClientMessage } from "./types.js";
 
 const HISTORY_LIMIT_BYTES = 512 * 1024;
 const CLIENT_BUFFER_LIMIT_BYTES = 1024 * 1024;
+const BODY_LIMIT_BYTES = 1024;
+const MAX_WS_MESSAGE_BYTES = 64 * 1024;
 const FLUSH_INTERVAL_MS = 16;
+const REQUEST_URL_BASE = "http://termi.local";
 
 function resolvePublicDir(): string {
   const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -47,12 +51,18 @@ export type ServerAuth =
   | {
       mode: "token";
       token: string;
+      mobileOnboardingSeen: boolean;
+      onMobileOnboardingSeen(): void;
     }
   | {
       mode: "trusted-browser";
       pairing: PairingManager;
       trustedDevices: TrustedDevice[];
       onTrustedDevicesChange(trustedDevices: TrustedDevice[]): void;
+      onPairingRequired(code: string): void;
+      onTrustedSessionReady(): void;
+      mobileOnboardingSeen: boolean;
+      onMobileOnboardingSeen(): void;
     };
 
 export function startServer(
@@ -60,7 +70,6 @@ export function startServer(
   auth: ServerAuth,
   port: number,
 ): Promise<ServerHandle> {
-  const html = getHtml();
   const publicDir = resolvePublicDir();
   const appJs = readFileSync(join(publicDir, "app.js"));
   const appCss = readFileSync(join(publicDir, "app.css"));
@@ -73,6 +82,8 @@ export function startServer(
   let historyBytes = 0;
   let pendingOutput = "";
   let flushTimer: NodeJS.Timeout | undefined;
+  let trustedSessionReadyNotified = false;
+  let mobileOnboardingSeen = auth.mobileOnboardingSeen;
 
   function appendToHistory(chunk: string): void {
     history.push(chunk);
@@ -124,6 +135,15 @@ export function startServer(
     }
   }
 
+  function notifyTrustedSessionReady(): void {
+    if (auth.mode !== "trusted-browser" || trustedSessionReadyNotified) {
+      return;
+    }
+
+    trustedSessionReadyNotified = true;
+    auth.onTrustedSessionReady();
+  }
+
   function getTrustedDevice(req: http.IncomingMessage): TrustedDevice | null {
     if (auth.mode !== "trusted-browser") {
       return null;
@@ -163,11 +183,40 @@ export function startServer(
     return false;
   }
 
+  function isSameOriginOrMissing(req: http.IncomingMessage): boolean {
+    const hasOrigin = !!req.headers.origin;
+    const hasReferer = !!req.headers.referer;
+
+    if (!hasOrigin && !hasReferer) {
+      return true;
+    }
+
+    return isSameOrigin(req);
+  }
+
+  function isLikelyMobileRequest(req: http.IncomingMessage): boolean {
+    const userAgent = getHeaderValue(req.headers["user-agent"]).toLowerCase();
+    const mobileHint = getHeaderValue(req.headers["sec-ch-ua-mobile"]).toLowerCase();
+
+    return mobileHint === "?1" || /(iphone|ipad|ipod|android|mobile|windows phone)/.test(userAgent);
+  }
+
+  function parseRequestUrl(req: http.IncomingMessage): URL | null {
+    try {
+      return new URL(req.url || "/", REQUEST_URL_BASE);
+    } catch {
+      return null;
+    }
+  }
+
   async function readBody(req: http.IncomingMessage): Promise<string> {
     const chunks: Buffer[] = [];
+    let totalBytes = 0;
     for await (const chunk of req) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      if (chunks.reduce((total, entry) => total + entry.length, 0) > 1024) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      chunks.push(buffer);
+      totalBytes += buffer.length;
+      if (totalBytes > BODY_LIMIT_BYTES) {
         throw new Error("Request body too large");
       }
     }
@@ -175,7 +224,12 @@ export function startServer(
   }
 
   const server = http.createServer((req, res) => {
-    const url = new URL(req.url || "/", `http://${req.headers.host}`);
+    const url = parseRequestUrl(req);
+    if (!url) {
+      res.writeHead(400, { "Content-Type": "text/plain" });
+      res.end("Bad request");
+      return;
+    }
 
     if (url.pathname === "/health") {
       res.writeHead(200);
@@ -236,6 +290,7 @@ export function startServer(
       } else {
         const trustedDevice = getTrustedDevice(req);
         if (!trustedDevice) {
+          auth.onPairingRequired(auth.pairing.getCode());
           res.writeHead(200, {
             "Content-Type": "text/html; charset=utf-8",
             "Cache-Control": "no-store",
@@ -243,8 +298,17 @@ export function startServer(
           res.end(getPairingHtml());
           return;
         }
+        notifyTrustedSessionReady();
         touchTrustedBrowser(trustedDevice.id);
       }
+
+      const onboardingSeenPath = auth.mode === "token"
+        ? `/onboarding/seen?t=${encodeURIComponent(auth.token)}`
+        : "/onboarding/seen";
+      const html = getHtml({
+        onboardingSeenPath,
+        showOnboarding: isLikelyMobileRequest(req) && !mobileOnboardingSeen,
+      });
 
       res.writeHead(200, {
         "Content-Type": "text/html; charset=utf-8",
@@ -252,6 +316,33 @@ export function startServer(
         "Cache-Control": "no-store",
       });
       res.end(html);
+      return;
+    }
+
+    if (url.pathname === "/onboarding/seen" && req.method === "POST") {
+      if (!isSameOriginOrMissing(req)) {
+        res.writeHead(403, { "Content-Type": "text/plain" });
+        res.end("Forbidden");
+        return;
+      }
+
+      if (auth.mode === "token") {
+        const reqToken = url.searchParams.get("t");
+        if (!validateToken(reqToken, auth.token)) {
+          res.writeHead(401, { "Content-Type": "text/plain" });
+          res.end("Unauthorized");
+          return;
+        }
+      } else if (!isTrustedBrowserRequest(req)) {
+        res.writeHead(401, { "Content-Type": "text/plain" });
+        res.end("Unauthorized");
+        return;
+      }
+
+      mobileOnboardingSeen = true;
+      auth.onMobileOnboardingSeen();
+      res.writeHead(204);
+      res.end();
       return;
     }
 
@@ -284,8 +375,9 @@ export function startServer(
             return;
           }
 
-          const { device, cookieValue } = createTrustedDevice();
+          const { device, cookieValue } = createTrustedDevice(inferTrustedDeviceLabel(req.headers));
           persistTrustedDevices(addTrustedDevice(trustedDevices, device));
+          notifyTrustedSessionReady();
           res.writeHead(303, {
             Location: "/",
             "Set-Cookie": serializeCookie(TRUSTED_DEVICE_COOKIE, cookieValue, 30 * 24 * 60 * 60),
@@ -304,11 +396,17 @@ export function startServer(
     res.end("Not found");
   });
 
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_WS_MESSAGE_BYTES });
 
   server.on("upgrade", (req, socket, head) => {
+    const url = parseRequestUrl(req);
+    if (!url) {
+      socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
     if (auth.mode === "token") {
-      const url = new URL(req.url || "/", `http://${req.headers.host}`);
       const reqToken = url.searchParams.get("t");
 
       if (!validateToken(reqToken, auth.token)) {
@@ -322,6 +420,7 @@ export function startServer(
         socket.destroy();
         return;
       }
+      notifyTrustedSessionReady();
     }
 
     wss.handleUpgrade(req, socket, head, (ws) => {
@@ -344,9 +443,22 @@ export function startServer(
     ws.on("message", (raw) => {
       try {
         const msg: WsClientMessage = JSON.parse(String(raw));
-        if (msg.type === "data" && msg.data) {
+        if (
+          msg.type === "data" &&
+          typeof msg.data === "string" &&
+          msg.data.length > 0 &&
+          Buffer.byteLength(msg.data) <= MAX_WS_MESSAGE_BYTES
+        ) {
           ptyHandle.write(msg.data);
-        } else if (msg.type === "resize" && msg.cols && msg.rows) {
+        } else if (
+          msg.type === "resize" &&
+          Number.isInteger(msg.cols) &&
+          Number.isInteger(msg.rows) &&
+          msg.cols >= 1 &&
+          msg.cols <= 500 &&
+          msg.rows >= 1 &&
+          msg.rows <= 200
+        ) {
           ptyHandle.resize(msg.cols, msg.rows);
         }
       } catch {
@@ -356,6 +468,11 @@ export function startServer(
 
     ws.on("close", () => {
       clients.delete(ws);
+    });
+
+    ws.on("error", () => {
+      clients.delete(ws);
+      ws.terminate();
     });
   });
 
@@ -394,4 +511,11 @@ export function startServer(
 
     tryListen(port, 10);
   });
+}
+
+function getHeaderValue(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) {
+    return value[0] ?? "";
+  }
+  return value ?? "";
 }

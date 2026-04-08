@@ -29,6 +29,28 @@ export function printSessionInfo(url: string, mode: string): void {
   });
 }
 
+export function printPersistentAccessInfo(hasTrustedDevices: boolean): void {
+  if (hasTrustedDevices) {
+    console.log(chalk.dim("  Trusted browsers will open the terminal right away."));
+    console.log(chalk.dim("  New browsers will show a pairing screen, and the code will appear here."));
+  } else {
+    console.log(chalk.dim("  The first browser to open this URL will need to pair."));
+    console.log(chalk.dim("  When that happens, the pairing code will appear here."));
+  }
+  console.log(chalk.dim("  The local terminal will attach after a trusted browser connects."));
+  console.log("");
+}
+
+export function printWaitingForTrustedBrowser(): void {
+  console.log(chalk.dim("  Waiting for a trusted browser to connect..."));
+  console.log("");
+}
+
+export function printTrustedBrowserConnected(): void {
+  console.log(`  ${chalk.green("✔")} ${chalk.green("Trusted browser connected. Attaching local terminal...")}`);
+  console.log("");
+}
+
 export function printPairingCode(code: string): void {
   console.log(`  ${chalk.yellow("Pairing code:")} ${chalk.bold(code)}`);
   console.log(chalk.dim("  Enter this on your phone to trust a new browser."));

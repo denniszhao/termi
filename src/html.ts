@@ -1,4 +1,14 @@
-export function getHtml(): string {
+interface HtmlOptions {
+  onboardingSeenPath: string;
+  showOnboarding: boolean;
+}
+
+export function getHtml(options: HtmlOptions): string {
+  const bootstrap = serializeJsonForHtml({
+    onboardingSeenPath: options.onboardingSeenPath,
+    showOnboarding: options.showOnboarding,
+  });
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -15,12 +25,25 @@ export function getHtml(): string {
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <div id="terminal-brand"><span id="terminal-brand-logo">🍉</span><span id="terminal-brand-wordmark">termi</span></div>
-  <div id="status">Connecting...</div>
+  <div id="terminal-brand">
+    <span id="terminal-brand-logo">🍉</span><span id="terminal-brand-wordmark">termi</span><span id="status"><span id="status-dot"></span><span id="status-text">Connecting</span></span>
+  </div>
   <div id="terminal"></div>
   <div id="trackpad-hint">&larr; &rarr; &uarr; &darr;</div>
   <button id="kb-toggle" type="button">&#9000;</button>
   <div id="keyboard"></div>
+  <div id="onboarding-backdrop">
+    <div id="onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+      <h2 id="onboarding-title">Quick tour</h2>
+      <ol id="onboarding-list">
+        <li>On mobile, press the keyboard button to switch between virtual and OS-based keyboards.</li>
+        <li>Hold and drag on the terminal to move the text cursor.</li>
+      </ol>
+      <p id="onboarding-error" hidden>Couldn't save this yet. Try again.</p>
+      <button id="onboarding-dismiss" type="button">Got it</button>
+    </div>
+  </div>
+  <script id="termi-bootstrap" type="application/json">${bootstrap}</script>
   <script src="/app.js"></script>
 </body>
 </html>`;
@@ -40,7 +63,7 @@ export function getPairingHtml(error?: string): string {
   <style>
     :root {
       color-scheme: dark;
-      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-family: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     }
     body {
       margin: 0;
@@ -109,6 +132,7 @@ export function getPairingHtml(error?: string): string {
       <input
         name="code"
         type="text"
+        autofocus
         inputmode="text"
         maxlength="6"
         autocapitalize="characters"
@@ -121,6 +145,10 @@ export function getPairingHtml(error?: string): string {
   </main>
 </body>
 </html>`;
+}
+
+function serializeJsonForHtml(value: unknown): string {
+  return JSON.stringify(value).replaceAll("<", "\\u003c");
 }
 
 function escapeHtml(value: string): string {

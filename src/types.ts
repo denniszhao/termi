@@ -10,6 +10,7 @@ export interface TrustedDevice {
   secretHash: string;
   createdAt: string;
   lastSeenAt: string;
+  label?: string;
 }
 
 export interface TermiSavedConfig {
@@ -19,6 +20,7 @@ export interface TermiSavedConfig {
     domain: string;
   };
   trustedDevices: TrustedDevice[];
+  mobileOnboardingSeen: boolean;
 }
 
 export interface WsClientMessage {

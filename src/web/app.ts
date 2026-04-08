@@ -5,6 +5,7 @@ import { mustGetElement } from "./dom.js";
 import { createKeyboardController } from "./keyboard.js";
 import { createLayoutController } from "./layout.js";
 import { createTerminalSocket, type TerminalSocketController } from "./socket.js";
+import { createStatusController } from "./status.js";
 import { attachTrackpad } from "./trackpad.js";
 
 const isMobile = "ontouchstart" in window;
@@ -13,16 +14,20 @@ const token = new URLSearchParams(location.search).get("t") ?? "";
 const wsUrl = token
   ? `${proto}//${location.host}/?t=${token}`
   : `${proto}//${location.host}/`;
+const bootstrap = getBootstrapData();
 
 const terminalEl = mustGetElement<HTMLDivElement>("terminal");
 const terminalBrandEl = mustGetElement<HTMLDivElement>("terminal-brand");
-const statusEl = mustGetElement<HTMLDivElement>("status");
 const keyboardEl = mustGetElement<HTMLDivElement>("keyboard");
 const toggleButton = mustGetElement<HTMLButtonElement>("kb-toggle");
 const trackpadHint = mustGetElement<HTMLDivElement>("trackpad-hint");
+const onboardingBackdrop = mustGetElement<HTMLDivElement>("onboarding-backdrop");
+const onboardingDismissButton = mustGetElement<HTMLButtonElement>("onboarding-dismiss");
+const onboardingErrorEl = mustGetElement<HTMLParagraphElement>("onboarding-error");
 
 const term = new Terminal({
   cursorBlink: true,
+  fontFamily: 'ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
   fontSize: isMobile ? 13 : 14,
   theme: { background: "#1e1e1e" },
 });
@@ -39,6 +44,7 @@ if (helperTextarea) {
 }
 
 let socket: TerminalSocketController;
+const status = createStatusController();
 
 function sendResize(): void {
   const dims = fitAddon.proposeDimensions();
@@ -73,13 +79,15 @@ const layout = createLayoutController({
 
 socket = createTerminalSocket({
   wsUrl,
-  statusEl,
   onData: (data) => {
     term.write(data);
   },
   onOpen: () => {
     layout.fitTerminal();
     sendResize();
+  },
+  onStateChange: (state) => {
+    status.setState(state);
   },
 });
 
@@ -118,4 +126,58 @@ attachTrackpad({
 
 layout.initialize();
 layout.fitTerminal();
+setupOnboarding();
 socket.connect();
+
+function getBootstrapData(): { onboardingSeenPath: string; showOnboarding: boolean } {
+  const bootstrapEl = mustGetElement<HTMLScriptElement>("termi-bootstrap");
+  return JSON.parse(bootstrapEl.textContent || "{}") as { onboardingSeenPath: string; showOnboarding: boolean };
+}
+
+function setupOnboarding(): void {
+  if (!isMobile || !bootstrap.showOnboarding) {
+    onboardingBackdrop.style.display = "none";
+    return;
+  }
+
+  onboardingBackdrop.style.display = "grid";
+  let submitting = false;
+
+  const dismissOnboarding = async () => {
+    if (submitting) {
+      return;
+    }
+
+    submitting = true;
+    onboardingDismissButton.disabled = true;
+    onboardingErrorEl.hidden = true;
+
+    try {
+      const response = await fetch(bootstrap.onboardingSeenPath, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to save onboarding state");
+      }
+
+      onboardingBackdrop.style.display = "none";
+    } catch {
+      submitting = false;
+      onboardingDismissButton.disabled = false;
+      onboardingErrorEl.hidden = false;
+    }
+  };
+
+  onboardingDismissButton.addEventListener("pointerup", (event) => {
+    event.preventDefault();
+    void dismissOnboarding();
+  });
+  onboardingDismissButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    void dismissOnboarding();
+  });
+}
