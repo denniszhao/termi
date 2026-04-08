@@ -2,7 +2,7 @@ import esbuild from "esbuild";
 
 const watch = process.argv.includes("--watch");
 
-const ctx = await esbuild.context({
+const cliCtx = await esbuild.context({
   entryPoints: ["src/cli.ts"],
   bundle: true,
   platform: "node",
@@ -14,10 +14,20 @@ const ctx = await esbuild.context({
   sourcemap: true,
 });
 
+const webCtx = await esbuild.context({
+  entryPoints: ["src/web/app.ts"],
+  bundle: true,
+  platform: "browser",
+  target: "es2020",
+  format: "iife",
+  outdir: "dist/public",
+  entryNames: "app",
+});
+
 if (watch) {
-  await ctx.watch();
+  await Promise.all([cliCtx.watch(), webCtx.watch()]);
   console.log("Watching...");
 } else {
-  await ctx.rebuild();
-  await ctx.dispose();
+  await Promise.all([cliCtx.rebuild(), webCtx.rebuild()]);
+  await Promise.all([cliCtx.dispose(), webCtx.dispose()]);
 }

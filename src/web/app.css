@@ -1,0 +1,226 @@
+@import "@xterm/xterm/css/xterm.css";
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  background: #1e1e1e;
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+}
+
+#terminal {
+  width: 100%;
+  height: 100%;
+}
+
+#status {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 4px 8px;
+  padding-top: calc(4px + env(safe-area-inset-top));
+  font-family: monospace;
+  font-size: 12px;
+  color: #888;
+  background: rgba(0, 0, 0, 0.8);
+  z-index: 10;
+  text-align: center;
+  transition: opacity 0.3s;
+}
+
+#status.connected {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#kb-toggle {
+  display: none;
+  position: fixed;
+  right: 8px;
+  z-index: 30;
+  width: 44px;
+  height: 36px;
+  font-size: 18px;
+  color: #bbb;
+  background: #333;
+  border: 1px solid #555;
+  border-radius: 8px;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+}
+
+#kb-toggle.visible {
+  display: flex;
+}
+
+#kb-toggle:active {
+  background: #555;
+}
+
+#kb-toggle.native-active {
+  background: #2563eb;
+  color: #fff;
+  border-color: #2563eb;
+}
+
+#keyboard {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 4px 3px;
+  padding-bottom: calc(4px + env(safe-area-inset-bottom));
+  background: #1a1a1a;
+  border-top: 1px solid #333;
+  z-index: 20;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#keyboard.visible {
+  display: flex;
+}
+
+.kb-row {
+  display: flex;
+  gap: 3px;
+  justify-content: center;
+}
+
+.kb-row.action-row {
+  gap: 2px;
+}
+
+.kb-bottom-wrap {
+  display: flex;
+  gap: 3px;
+}
+
+.kb-bottom-left {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kb-enter {
+  width: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: -apple-system, system-ui, monospace;
+  font-size: 18px;
+  color: #fff;
+  background: #2563eb;
+  border: none;
+  border-radius: 5px;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  cursor: pointer;
+  user-select: none;
+}
+
+.kb-enter:active {
+  background: #1d4ed8;
+}
+
+.kb-key {
+  flex: 1;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: -apple-system, system-ui, monospace;
+  font-size: 15px;
+  color: #e0e0e0;
+  background: #333;
+  border: none;
+  border-radius: 5px;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  cursor: pointer;
+  user-select: none;
+  min-width: 0;
+}
+
+.kb-key:active,
+.kb-key.pressed {
+  background: #555;
+}
+
+.kb-key.active {
+  background: #2563eb;
+  color: #fff;
+}
+
+.kb-key.mod {
+  background: #444;
+  font-size: 12px;
+  color: #bbb;
+}
+
+.kb-key.mod:active,
+.kb-key.mod.pressed {
+  background: #666;
+}
+
+.kb-key.mod.active {
+  background: #2563eb;
+  color: #fff;
+}
+
+.kb-key.wide {
+  flex: 1.4;
+}
+
+.kb-key.space {
+  flex: 4;
+}
+
+.kb-key.action {
+  flex: 1;
+  height: 34px;
+  font-size: 11px;
+  background: #2a2a2a;
+  color: #999;
+}
+
+.kb-key.action:active,
+.kb-key.action.pressed {
+  background: #555;
+  color: #fff;
+}
+
+.kb-key.action.active {
+  background: #2563eb;
+  color: #fff;
+}
+
+#trackpad-hint {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-family: monospace;
+  font-size: 24px;
+  color: rgba(255, 255, 255, 0.5);
+  background: rgba(0, 0, 0, 0.5);
+  padding: 12px 20px;
+  border-radius: 12px;
+  z-index: 15;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+#trackpad-hint.show {
+  opacity: 1;
+}

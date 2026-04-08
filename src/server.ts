@@ -1,4 +1,7 @@
 import http from "node:http";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import type { PtyHandle } from "./pty-manager.js";
 import { validateToken } from "./auth.js";
@@ -21,6 +24,9 @@ export function startServer(
   port: number,
 ): Promise<ServerHandle> {
   const html = getHtml();
+  const publicDir = join(dirname(fileURLToPath(import.meta.url)), "public");
+  const appJs = readFileSync(join(publicDir, "app.js"));
+  const appCss = readFileSync(join(publicDir, "app.css"));
   const clients = new Set<WebSocket>();
   const history: string[] = [];
   let historyBytes = 0;
@@ -100,6 +106,24 @@ export function startServer(
     if (url.pathname === "/manifest.json") {
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "public, max-age=86400" });
       res.end(manifest);
+      return;
+    }
+
+    if (url.pathname === "/app.js") {
+      res.writeHead(200, {
+        "Content-Type": "application/javascript; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      res.end(appJs);
+      return;
+    }
+
+    if (url.pathname === "/app.css") {
+      res.writeHead(200, {
+        "Content-Type": "text/css; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      res.end(appCss);
       return;
     }
 
