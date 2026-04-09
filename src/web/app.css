@@ -172,6 +172,52 @@ body {
   display: flex;
 }
 
+#remote-exit-notice {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(7, 10, 18, 0.68);
+  z-index: 40;
+}
+
+#remote-exit-notice[hidden] {
+  display: none;
+}
+
+#remote-exit-card {
+  width: min(100%, 360px);
+  padding: 18px 18px 16px;
+  border: 1px solid #374151;
+  border-radius: 16px;
+  background: rgba(17, 24, 39, 0.96);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}
+
+#remote-exit-card h2 {
+  margin-bottom: 10px;
+  font-size: 18px;
+}
+
+#remote-exit-card p {
+  color: #d1d5db;
+  line-height: 1.45;
+  margin-bottom: 10px;
+}
+
+#remote-exit-dismiss {
+  margin-top: 4px;
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: #22c55e;
+  color: #052e16;
+  font: inherit;
+  font-weight: 700;
+}
+
 .kb-row {
   display: flex;
   gap: 3px;

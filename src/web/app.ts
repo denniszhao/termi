@@ -3,6 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import "./app.css";
 import { mustGetElement } from "./dom.js";
 import { createKeyboardController } from "./keyboard.js";
+import { createTerminalInputGuard } from "./input-guard.js";
 import { createLayoutController } from "./layout.js";
 import { createTerminalSocket, type TerminalSocketController } from "./socket.js";
 import { createStatusController } from "./status.js";
@@ -21,6 +22,8 @@ const terminalBrandEl = mustGetElement<HTMLDivElement>("terminal-brand");
 const keyboardEl = mustGetElement<HTMLDivElement>("keyboard");
 const toggleButton = mustGetElement<HTMLButtonElement>("kb-toggle");
 const trackpadHint = mustGetElement<HTMLDivElement>("trackpad-hint");
+const remoteExitNotice = mustGetElement<HTMLDivElement>("remote-exit-notice");
+const remoteExitDismissButton = mustGetElement<HTMLButtonElement>("remote-exit-dismiss");
 const onboardingBackdrop = mustGetElement<HTMLDivElement>("onboarding-backdrop");
 const onboardingDismissButton = mustGetElement<HTMLButtonElement>("onboarding-dismiss");
 const onboardingErrorEl = mustGetElement<HTMLParagraphElement>("onboarding-error");
@@ -45,6 +48,14 @@ if (helperTextarea) {
 
 let socket: TerminalSocketController;
 const status = createStatusController();
+const inputGuard = createTerminalInputGuard({
+  onBlockedExitAttempt: () => {
+    remoteExitNotice.hidden = false;
+  },
+  onInput: (data) => {
+    socket.sendData(data);
+  },
+});
 
 function sendResize(): void {
   const dims = fitAddon.proposeDimensions();
@@ -100,7 +111,7 @@ const keyboard = createKeyboardController({
   keyboardEl,
   isMobile,
   onInput: (data) => {
-    socket.sendData(data);
+    inputGuard.send(data);
   },
 });
 
@@ -110,7 +121,11 @@ toggleButton.addEventListener("click", (event) => {
 });
 
 term.onData((data) => {
-  socket.sendData(data);
+  inputGuard.send(data);
+});
+
+remoteExitDismissButton.addEventListener("click", () => {
+  remoteExitNotice.hidden = true;
 });
 
 keyboard.mount();
@@ -123,7 +138,7 @@ attachTrackpad({
   isMobile,
   isUsingCustomKeyboard: layout.isUsingCustomKeyboard,
   sendKey: (data) => {
-    socket.sendData(data);
+    inputGuard.send(data);
   },
   terminalEl,
   trackpadHint,

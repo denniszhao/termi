@@ -32,6 +32,14 @@ export function getHtml(options: HtmlOptions): string {
   <div id="trackpad-hint">&larr; &rarr; &uarr; &darr;</div>
   <button id="kb-toggle" type="button">&#9000;</button>
   <div id="keyboard"></div>
+  <div id="remote-exit-notice" hidden>
+    <div id="remote-exit-card" role="dialog" aria-modal="true" aria-labelledby="remote-exit-title">
+      <h2 id="remote-exit-title">Keep This Session Running</h2>
+      <p>Close this tab to disconnect this browser.</p>
+      <p>To end the Termi session itself, use the local device where Termi was started.</p>
+      <button id="remote-exit-dismiss" type="button">Got it</button>
+    </div>
+  </div>
   <div id="onboarding-backdrop">
     <div id="onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
       <h2 id="onboarding-title">Quick tour</h2>
