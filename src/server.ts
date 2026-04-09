@@ -1,11 +1,11 @@
 import http from "node:http";
+import { randomBytes, randomInt } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import { parseCookies, serializeCookie } from "./cookies.js";
 import type { PtyHandle } from "./pty-manager.js";
-import type { PairingManager } from "./pairing.js";
 import {
   TRUSTED_DEVICE_COOKIE,
   addTrustedDevice,
@@ -15,16 +15,26 @@ import {
   verifyTrustedDeviceCookie,
 } from "./trusted-devices.js";
 import { validateToken } from "./auth.js";
-import { getHtml, getPairingHtml } from "./html.js";
+import {
+  getActiveSessionHtml,
+  getApprovalBusyHtml,
+  getHtml,
+  getPendingApprovalHtml,
+  getReplaceSessionHtml,
+} from "./html.js";
 import { icon192, favicon96, faviconIco, manifest } from "./assets.js";
 import type { TrustedDevice, WsClientMessage } from "./types.js";
 
 const HISTORY_LIMIT_BYTES = 512 * 1024;
 const CLIENT_BUFFER_LIMIT_BYTES = 1024 * 1024;
-const BODY_LIMIT_BYTES = 1024;
 const MAX_WS_MESSAGE_BYTES = 64 * 1024;
 const FLUSH_INTERVAL_MS = 16;
 const REQUEST_URL_BASE = "http://termi.local";
+const PENDING_APPROVAL_COOKIE = "__Host-termi_pending";
+const PENDING_APPROVAL_TTL_MS = 5 * 60 * 1000;
+const TAKEOVER_CLOSE_CODE = 4001;
+const APPROVAL_CODE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+const APPROVAL_CODE_LENGTH = 6;
 
 function resolvePublicDir(): string {
   const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -47,6 +57,27 @@ export interface ServerHandle {
   close(): void;
 }
 
+export interface PendingApprovalInfo {
+  code: string;
+  expiresAt: string;
+  id: string;
+  intent: "replace-active-session" | "trust";
+  label: string;
+}
+
+interface PendingApprovalRequest extends PendingApprovalInfo {
+  approvedCookieValue?: string;
+  statusMessage?: string;
+  status: "approved" | "expired" | "pending" | "rejected";
+}
+
+type UntrustedBrowserState =
+  | { kind: "approval-unavailable"; message: string }
+  | { kind: "approval-pending"; request: PendingApprovalRequest }
+  | { kind: "approval-busy"; message: string }
+  | { kind: "replace-required" }
+  | { kind: "trust-available" };
+
 export type ServerAuth =
   | {
       mode: "token";
@@ -56,10 +87,15 @@ export type ServerAuth =
     }
   | {
       mode: "trusted-browser";
-      pairing: PairingManager;
       trustedDevices: TrustedDevice[];
       onTrustedDevicesChange(trustedDevices: TrustedDevice[]): void;
-      onPairingRequired(code: string): void;
+      onPendingApprovalRequest(
+        request: PendingApprovalInfo,
+        actions: {
+          approve(): boolean;
+          reject(message?: string): boolean;
+        },
+      ): void;
       onTrustedSessionReady(): void;
       mobileOnboardingSeen: boolean;
       onMobileOnboardingSeen(): void;
@@ -75,6 +111,13 @@ export function startServer(
   const appCss = readFileSync(join(publicDir, "app.css"));
   const clients = new Set<WebSocket>();
   const history: string[] = [];
+  let activeClient:
+    | {
+        deviceId: string | null;
+        ws: WebSocket;
+      }
+    | undefined;
+  let pendingApproval: PendingApprovalRequest | undefined;
   let trustedDevices =
     auth.mode === "trusted-browser"
       ? [...auth.trustedDevices]
@@ -135,6 +178,58 @@ export function startServer(
     }
   }
 
+  function clearPendingApproval(): void {
+    pendingApproval = undefined;
+  }
+
+  function getPendingApprovalMessage(request: PendingApprovalRequest): string {
+    return request.statusMessage
+      ?? "This approval request is no longer available. Refresh to try again.";
+  }
+
+  function markPendingApprovalExpiredIfNeeded(): void {
+    if (!pendingApproval) {
+      return;
+    }
+
+    if (pendingApproval.expiresAt <= new Date().toISOString()) {
+      pendingApproval = {
+        ...pendingApproval,
+        status: "expired",
+      };
+    }
+  }
+
+  function getPendingApproval(req: http.IncomingMessage): PendingApprovalRequest | null {
+    if (auth.mode !== "trusted-browser" || !pendingApproval) {
+      return null;
+    }
+
+    markPendingApprovalExpiredIfNeeded();
+
+    const cookies = parseCookies(req.headers.cookie);
+    return cookies[PENDING_APPROVAL_COOKIE] === pendingApproval.id
+      ? pendingApproval
+      : null;
+  }
+
+  function hasOutstandingPendingApproval(): boolean {
+    markPendingApprovalExpiredIfNeeded();
+    return pendingApproval?.status === "pending" || pendingApproval?.status === "approved";
+  }
+
+  function getActiveTrustedDevice(): TrustedDevice | null {
+    if (!activeClient?.deviceId) {
+      return null;
+    }
+
+    return trustedDevices.find((device) => device.id === activeClient?.deviceId) ?? null;
+  }
+
+  function hasOtherActiveTrustedClient(deviceId: string): boolean {
+    return !!activeClient && activeClient.deviceId !== null && activeClient.deviceId !== deviceId;
+  }
+
   function notifyTrustedSessionReady(): void {
     if (auth.mode !== "trusted-browser" || trustedSessionReadyNotified) {
       return;
@@ -158,6 +253,80 @@ export function startServer(
 
   function touchTrustedBrowser(deviceId: string): void {
     persistTrustedDevices(touchTrustedDevice(trustedDevices, deviceId));
+  }
+
+  function generateApprovalCode(): string {
+    let code = "";
+    for (let i = 0; i < APPROVAL_CODE_LENGTH; i += 1) {
+      code += APPROVAL_CODE_CHARS[randomInt(APPROVAL_CODE_CHARS.length)];
+    }
+    return code;
+  }
+
+  function createPendingApprovalRequest(
+    req: http.IncomingMessage,
+    intent: PendingApprovalInfo["intent"],
+  ): PendingApprovalRequest {
+    const request: PendingApprovalRequest = {
+      code: generateApprovalCode(),
+      expiresAt: new Date(Date.now() + PENDING_APPROVAL_TTL_MS).toISOString(),
+      id: randomBytes(12).toString("base64url"),
+      intent,
+      label: inferTrustedDeviceLabel(req.headers),
+      status: "pending",
+    };
+
+    pendingApproval = request;
+    auth.onPendingApprovalRequest(
+      {
+        code: request.code,
+        expiresAt: request.expiresAt,
+        id: request.id,
+        intent: request.intent,
+        label: request.label,
+      },
+      {
+        approve: () => approvePendingApprovalRequest(request.id),
+        reject: (message) => rejectPendingApprovalRequest(request.id, message),
+      },
+    );
+
+    return pendingApproval ?? request;
+  }
+
+  function approvePendingApprovalRequest(requestId: string): boolean {
+    if (auth.mode !== "trusted-browser" || !pendingApproval || pendingApproval.id !== requestId) {
+      return false;
+    }
+    if (pendingApproval.status !== "pending" || pendingApproval.expiresAt <= new Date().toISOString()) {
+      pendingApproval = {
+        ...pendingApproval,
+        status: "expired",
+      };
+      return false;
+    }
+
+    const { device, cookieValue } = createTrustedDevice(pendingApproval.label);
+    persistTrustedDevices(addTrustedDevice(trustedDevices, device));
+    pendingApproval = {
+      ...pendingApproval,
+      approvedCookieValue: cookieValue,
+      status: "approved",
+    };
+    return true;
+  }
+
+  function rejectPendingApprovalRequest(requestId: string, statusMessage?: string): boolean {
+    if (!pendingApproval || pendingApproval.id !== requestId || pendingApproval.status !== "pending") {
+      return false;
+    }
+
+    pendingApproval = {
+      ...pendingApproval,
+      ...(statusMessage ? { statusMessage } : {}),
+      status: "rejected",
+    };
+    return true;
   }
 
   function isSameOrigin(req: http.IncomingMessage): boolean {
@@ -209,18 +378,60 @@ export function startServer(
     }
   }
 
-  async function readBody(req: http.IncomingMessage): Promise<string> {
-    const chunks: Buffer[] = [];
-    let totalBytes = 0;
-    for await (const chunk of req) {
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      chunks.push(buffer);
-      totalBytes += buffer.length;
-      if (totalBytes > BODY_LIMIT_BYTES) {
-        throw new Error("Request body too large");
+  function getUntrustedBrowserState(req: http.IncomingMessage): UntrustedBrowserState {
+    const currentPending = getPendingApproval(req);
+    if (currentPending) {
+      if (currentPending.status === "rejected" || currentPending.status === "expired") {
+        return {
+          kind: "approval-unavailable",
+          message: getPendingApprovalMessage(currentPending),
+        };
       }
+
+      return {
+        kind: "approval-pending",
+        request: currentPending,
+      };
     }
-    return Buffer.concat(chunks).toString("utf-8");
+
+    if (hasOutstandingPendingApproval()) {
+      return {
+        kind: "approval-busy",
+        message: "Another browser is already waiting for local approval.",
+      };
+    }
+
+    if (activeClient?.deviceId !== null && activeClient !== undefined) {
+      return { kind: "replace-required" };
+    }
+
+    return { kind: "trust-available" };
+  }
+
+  function beginPendingApproval(
+    req: http.IncomingMessage,
+    intent: PendingApprovalInfo["intent"],
+  ): UntrustedBrowserState {
+    const request = createPendingApprovalRequest(req, intent);
+    if (request.status === "rejected" || request.status === "expired") {
+      return {
+        kind: "approval-unavailable",
+        message: getPendingApprovalMessage(request),
+      };
+    }
+
+    return {
+      kind: "approval-pending",
+      request,
+    };
+  }
+
+  function getPendingApprovalCookieHeader(request: PendingApprovalRequest): string {
+    return serializeCookie(
+      PENDING_APPROVAL_COOKIE,
+      request.id,
+      Math.floor(PENDING_APPROVAL_TTL_MS / 1000),
+    );
   }
 
   const server = http.createServer((req, res) => {
@@ -290,14 +501,64 @@ export function startServer(
       } else {
         const trustedDevice = getTrustedDevice(req);
         if (!trustedDevice) {
-          auth.onPairingRequired(auth.pairing.getCode());
+          const state = getUntrustedBrowserState(req);
+          const resolvedState = state.kind === "trust-available"
+            ? beginPendingApproval(req, "trust")
+            : state;
+
+          if (resolvedState.kind === "approval-unavailable") {
+            res.writeHead(200, {
+              "Content-Type": "text/html; charset=utf-8",
+              "Cache-Control": "no-store",
+              "Set-Cookie": serializeCookie(PENDING_APPROVAL_COOKIE, "", 0),
+            });
+            res.end(getApprovalBusyHtml(resolvedState.message));
+            clearPendingApproval();
+            return;
+          }
+
+          if (resolvedState.kind === "replace-required") {
+            res.writeHead(200, {
+              "Content-Type": "text/html; charset=utf-8",
+              "Cache-Control": "no-store",
+            });
+            res.end(getReplaceSessionHtml());
+            return;
+          }
+
+          if (resolvedState.kind === "approval-busy") {
+            res.writeHead(200, {
+              "Content-Type": "text/html; charset=utf-8",
+              "Cache-Control": "no-store",
+            });
+            res.end(getApprovalBusyHtml(resolvedState.message));
+            return;
+          }
+
+          res.writeHead(200, {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+            "Set-Cookie": getPendingApprovalCookieHeader(resolvedState.request),
+          });
+          res.end(getPendingApprovalHtml({
+            code: resolvedState.request.code,
+            expiresAt: resolvedState.request.expiresAt,
+            label: resolvedState.request.label,
+          }));
+          return;
+        }
+
+        if (hasOtherActiveTrustedClient(trustedDevice.id)) {
           res.writeHead(200, {
             "Content-Type": "text/html; charset=utf-8",
             "Cache-Control": "no-store",
           });
-          res.end(getPairingHtml());
+          res.end(getActiveSessionHtml({
+            activeDeviceLabel: getActiveTrustedDevice()?.label ?? "another trusted browser",
+          }));
           return;
         }
+
         notifyTrustedSessionReady();
         touchTrustedBrowser(trustedDevice.id);
       }
@@ -316,6 +577,138 @@ export function startServer(
         "Cache-Control": "no-store",
       });
       res.end(html);
+      return;
+    }
+
+    if (url.pathname === "/pair/status" && req.method === "GET") {
+      if (auth.mode !== "trusted-browser") {
+        res.writeHead(404);
+        res.end("Not found");
+        return;
+      }
+
+      const request = getPendingApproval(req);
+      if (!request) {
+        res.writeHead(200, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Set-Cookie": serializeCookie(PENDING_APPROVAL_COOKIE, "", 0),
+        });
+        res.end(JSON.stringify({ status: "expired" }));
+        return;
+      }
+
+      if (request.status === "approved" && request.approvedCookieValue) {
+        if (request.intent === "replace-active-session" && activeClient) {
+          const previousActiveClient = activeClient;
+          activeClient = undefined;
+          previousActiveClient.ws.close(
+            TAKEOVER_CLOSE_CODE,
+            "Session replaced by a newly approved browser",
+          );
+        }
+
+        res.writeHead(200, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Set-Cookie": [
+            serializeCookie(TRUSTED_DEVICE_COOKIE, request.approvedCookieValue, 30 * 24 * 60 * 60),
+            serializeCookie(PENDING_APPROVAL_COOKIE, "", 0),
+          ],
+        });
+        clearPendingApproval();
+        res.end(JSON.stringify({ status: "approved" }));
+        return;
+      }
+
+      if (request.status === "rejected" || request.status === "expired") {
+        res.writeHead(200, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Set-Cookie": serializeCookie(PENDING_APPROVAL_COOKIE, "", 0),
+        });
+        const body = {
+          message: request.statusMessage,
+          status: request.status,
+        };
+        clearPendingApproval();
+        res.end(JSON.stringify(body));
+        return;
+      }
+
+      res.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      res.end(JSON.stringify({ status: "pending" }));
+      return;
+    }
+
+    if (url.pathname === "/pair/request" && req.method === "POST") {
+      if (auth.mode !== "trusted-browser") {
+        res.writeHead(404);
+        res.end("Not found");
+        return;
+      }
+
+      if (!isSameOriginOrMissing(req)) {
+        res.writeHead(403, { "Content-Type": "text/plain" });
+        res.end("Forbidden");
+        return;
+      }
+
+      if (getTrustedDevice(req)) {
+        res.writeHead(303, {
+          Location: "/",
+          "Cache-Control": "no-store",
+        });
+        res.end();
+        return;
+      }
+
+      const state = getUntrustedBrowserState(req);
+      const intent = activeClient?.deviceId !== null && activeClient !== undefined
+        ? "replace-active-session"
+        : "trust";
+      const resolvedState = state.kind === "trust-available" || state.kind === "replace-required"
+        ? beginPendingApproval(req, intent)
+        : state;
+
+      if (resolvedState.kind === "approval-unavailable") {
+        res.writeHead(200, {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Set-Cookie": serializeCookie(PENDING_APPROVAL_COOKIE, "", 0),
+        });
+        res.end(getApprovalBusyHtml(resolvedState.message));
+        clearPendingApproval();
+        return;
+      }
+
+      if (resolvedState.kind === "approval-busy") {
+        res.writeHead(200, {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+        });
+        res.end(getApprovalBusyHtml(resolvedState.message));
+        return;
+      }
+
+      if (resolvedState.kind !== "approval-pending") {
+        res.writeHead(303, {
+          Location: "/",
+          "Cache-Control": "no-store",
+        });
+        res.end();
+        return;
+      }
+
+      res.writeHead(303, {
+        Location: "/",
+        "Cache-Control": "no-store",
+        "Set-Cookie": getPendingApprovalCookieHeader(resolvedState.request),
+      });
+      res.end();
       return;
     }
 
@@ -346,7 +739,7 @@ export function startServer(
       return;
     }
 
-    if (url.pathname === "/pair" && req.method === "POST") {
+    if (url.pathname === "/takeover" && req.method === "POST") {
       if (auth.mode !== "trusted-browser") {
         res.writeHead(404);
         res.end("Not found");
@@ -359,36 +752,24 @@ export function startServer(
         return;
       }
 
-      readBody(req)
-        .then((body) => {
-          const code = new URLSearchParams(body).get("code") ?? "";
-          const result = auth.pairing.verify(code);
-          if (!result.ok) {
-            const message = result.error === "expired"
-              ? "The pairing code expired or changed. Check the local terminal for the current code."
-              : "That pairing code was not valid.";
-            res.writeHead(401, {
-              "Content-Type": "text/html; charset=utf-8",
-              "Cache-Control": "no-store",
-            });
-            res.end(getPairingHtml(message));
-            return;
-          }
+      const trustedDevice = getTrustedDevice(req);
+      if (!trustedDevice) {
+        res.writeHead(401, { "Content-Type": "text/plain" });
+        res.end("Unauthorized");
+        return;
+      }
 
-          const { device, cookieValue } = createTrustedDevice(inferTrustedDeviceLabel(req.headers));
-          persistTrustedDevices(addTrustedDevice(trustedDevices, device));
-          notifyTrustedSessionReady();
-          res.writeHead(303, {
-            Location: "/",
-            "Set-Cookie": serializeCookie(TRUSTED_DEVICE_COOKIE, cookieValue, 30 * 24 * 60 * 60),
-            "Cache-Control": "no-store",
-          });
-          res.end();
-        })
-        .catch((err) => {
-          res.writeHead(400, { "Content-Type": "text/plain" });
-          res.end(err instanceof Error ? err.message : "Bad request");
-        });
+      if (hasOtherActiveTrustedClient(trustedDevice.id)) {
+        const previousActiveClient = activeClient;
+        activeClient = undefined;
+        previousActiveClient?.ws.close(TAKEOVER_CLOSE_CODE, "Session taken over by another trusted browser");
+      }
+
+      res.writeHead(303, {
+        Location: "/",
+        "Cache-Control": "no-store",
+      });
+      res.end();
       return;
     }
 
@@ -415,20 +796,43 @@ export function startServer(
         return;
       }
     } else {
-      if (!isSameOrigin(req) || !isTrustedBrowserRequest(req)) {
+      const trustedDevice = getTrustedDevice(req);
+      if (!isSameOrigin(req) || !trustedDevice) {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
         socket.destroy();
         return;
       }
+
+      if (hasOtherActiveTrustedClient(trustedDevice.id)) {
+        socket.write("HTTP/1.1 409 Conflict\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+
       notifyTrustedSessionReady();
     }
 
     wss.handleUpgrade(req, socket, head, (ws) => {
-      wss.emit("connection", ws);
+      wss.emit("connection", ws, req);
     });
   });
 
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, req) => {
+    const trustedDevice = auth.mode === "trusted-browser"
+      ? getTrustedDevice(req)
+      : null;
+    const trustedDeviceId = trustedDevice?.id ?? null;
+
+    if (auth.mode === "trusted-browser") {
+      if (activeClient?.ws && activeClient.deviceId === trustedDeviceId && activeClient.ws !== ws) {
+        activeClient.ws.close(TAKEOVER_CLOSE_CODE, "Session reopened on the same trusted browser");
+      }
+      activeClient = {
+        deviceId: trustedDeviceId,
+        ws,
+      };
+    }
+
     const initialOutput = history.join("");
     if (initialOutput) {
       ws.send(JSON.stringify({ type: "data", data: initialOutput }), (err) => {
@@ -467,10 +871,16 @@ export function startServer(
     });
 
     ws.on("close", () => {
+      if (activeClient?.ws === ws) {
+        activeClient = undefined;
+      }
       clients.delete(ws);
     });
 
     ws.on("error", () => {
+      if (activeClient?.ws === ws) {
+        activeClient = undefined;
+      }
       clients.delete(ws);
       ws.terminate();
     });

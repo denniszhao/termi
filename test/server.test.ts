@@ -4,8 +4,8 @@ import { once } from "node:events";
 import net from "node:net";
 import WebSocket from "ws";
 import { startServer } from "../src/server.ts";
-import { createPairingManager } from "../src/pairing.ts";
 import type { PtyHandle } from "../src/pty-manager.ts";
+import { createTrustedDevice } from "../src/trusted-devices.ts";
 
 const runServerTests = process.env.TERMI_RUN_SERVER_TESTS === "1";
 
@@ -57,6 +57,13 @@ function sendRawHttp(port: number, request: string): Promise<string> {
     });
     socket.on("error", reject);
   });
+}
+
+function extractCookie(setCookieHeader: string | null, cookieName: string): string {
+  assert.ok(setCookieHeader);
+  const match = setCookieHeader.match(new RegExp(`(${cookieName}=[^;,]+)`));
+  assert.ok(match);
+  return match[1]!;
 }
 
 test("server serves health and protects the session page with a token", { skip: !runServerTests }, async () => {
@@ -126,23 +133,26 @@ test("server replays PTY output and forwards websocket input", { skip: !runServe
   }
 });
 
-test("persistent mode pairs a browser and then allows websocket access", { skip: !runServerTests }, async () => {
+test("persistent mode approves a pending browser locally and then allows websocket access", { skip: !runServerTests }, async () => {
   const pty = new FakePty();
-  const pairing = createPairingManager();
-  const pairingRequests: string[] = [];
+  let pendingApprovalActions:
+    | {
+        approve(): boolean;
+        reject(): boolean;
+      }
+    | undefined;
   let trustedSessionReadyCount = 0;
   let trustedDevices: Array<{ id: string; secretHash: string; createdAt: string; lastSeenAt: string; label?: string }> = [];
   const server = await startServer(
     pty,
     {
       mode: "trusted-browser",
-      pairing,
       trustedDevices,
       onTrustedDevicesChange: (nextTrustedDevices) => {
         trustedDevices = nextTrustedDevices;
       },
-      onPairingRequired: (code) => {
-        pairingRequests.push(code);
+      onPendingApprovalRequest: (_request, actions) => {
+        pendingApprovalActions = actions;
       },
       onTrustedSessionReady: () => {
         trustedSessionReadyCount += 1;
@@ -156,22 +166,25 @@ test("persistent mode pairs a browser and then allows websocket access", { skip:
   try {
     const pairingPage = await fetch(`http://127.0.0.1:${server.port}/`);
     assert.equal(pairingPage.status, 200);
-    assert.match(await pairingPage.text(), /Pair This Browser/);
-    assert.deepEqual(pairingRequests, [pairing.getCode()]);
+    assert.match(await pairingPage.text(), /Approve This Browser/);
+    assert.ok(pendingApprovalActions);
 
-    const pairResponse = await fetch(`http://127.0.0.1:${server.port}/pair`, {
-      method: "POST",
+    const pendingCookie = extractCookie(
+      pairingPage.headers.get("set-cookie"),
+      "__Host-termi_pending",
+    );
+
+    assert.equal(pendingApprovalActions.approve(), true);
+
+    const statusResponse = await fetch(`http://127.0.0.1:${server.port}/pair/status`, {
       headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Origin: `http://127.0.0.1:${server.port}`,
+        Cookie: pendingCookie,
       },
-      body: `code=${pairing.getCode()}`,
-      redirect: "manual",
     });
-    assert.equal(pairResponse.status, 303);
+    assert.equal(statusResponse.status, 200);
+    assert.deepEqual(await statusResponse.json(), { status: "approved" });
 
-    const cookie = pairResponse.headers.get("set-cookie");
-    assert.ok(cookie);
+    const cookie = extractCookie(statusResponse.headers.get("set-cookie"), "__Host-termi_trust");
     assert.equal(trustedDevices.length, 1);
     assert.equal(trustedDevices[0]?.label, "Unknown browser");
 
@@ -182,7 +195,6 @@ test("persistent mode pairs a browser and then allows websocket access", { skip:
     });
     assert.equal(trustedPage.status, 200);
     assert.match(await trustedPage.text(), /<title>Termi<\/title>/);
-    assert.deepEqual(pairingRequests, [pairingRequests[0]!]);
     assert.equal(trustedSessionReadyCount, 1);
 
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`, {
@@ -224,15 +236,13 @@ test("server returns 400 for malformed request hosts without crashing", { skip: 
 
 test("persistent mode ignores malformed trusted-device cookies", { skip: !runServerTests }, async () => {
   const pty = new FakePty();
-  const pairing = createPairingManager();
   const server = await startServer(
     pty,
     {
       mode: "trusted-browser",
-      pairing,
       trustedDevices: [],
       onTrustedDevicesChange: () => {},
-      onPairingRequired: () => {},
+      onPendingApprovalRequest: () => {},
       onTrustedSessionReady: () => {},
       mobileOnboardingSeen: false,
       onMobileOnboardingSeen: () => {},
@@ -248,7 +258,201 @@ test("persistent mode ignores malformed trusted-device cookies", { skip: !runSer
     });
 
     assert.equal(response.status, 200);
-    assert.match(await response.text(), /Pair This Browser/);
+    assert.match(await response.text(), /Approve This Browser/);
+  } finally {
+    server.close();
+  }
+});
+
+test("server does not render a verification code when approval is rejected immediately", { skip: !runServerTests }, async () => {
+  const pty = new FakePty();
+  const server = await startServer(
+    pty,
+    {
+      mode: "trusted-browser",
+      trustedDevices: [],
+      onTrustedDevicesChange: () => {},
+      onPendingApprovalRequest: (_request, actions) => {
+        actions.reject("Local approval is unavailable right now.");
+      },
+      onTrustedSessionReady: () => {},
+      mobileOnboardingSeen: false,
+      onMobileOnboardingSeen: () => {},
+    },
+    0,
+  );
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/`);
+    const html = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.match(html, /Approval Already In Progress/);
+    assert.match(html, /Local approval is unavailable right now/);
+    assert.doesNotMatch(html, /Approve This Browser/);
+  } finally {
+    server.close();
+  }
+});
+
+test("untrusted browsers must explicitly request replacement before pairing over an active session", { skip: !runServerTests }, async () => {
+  const pty = new FakePty();
+  let pendingApprovalActions:
+    | {
+        approve(): boolean;
+        reject(message?: string): boolean;
+      }
+    | undefined;
+  const first = createTrustedDevice("First phone");
+  const server = await startServer(
+    pty,
+    {
+      mode: "trusted-browser",
+      trustedDevices: [first.device],
+      onTrustedDevicesChange: () => {},
+      onPendingApprovalRequest: (_request, actions) => {
+        pendingApprovalActions = actions;
+      },
+      onTrustedSessionReady: () => {},
+      mobileOnboardingSeen: false,
+      onMobileOnboardingSeen: () => {},
+    },
+    0,
+  );
+
+  try {
+    const firstWs = new WebSocket(`ws://127.0.0.1:${server.port}/`, {
+      headers: {
+        Cookie: `__Host-termi_trust=${first.cookieValue}`,
+        Origin: `http://127.0.0.1:${server.port}`,
+      },
+    });
+    await once(firstWs, "open");
+
+    const blockedPage = await fetch(`http://127.0.0.1:${server.port}/`);
+    const blockedHtml = await blockedPage.text();
+    assert.equal(blockedPage.status, 200);
+    assert.match(blockedHtml, /Pair This Browser Instead/);
+    assert.doesNotMatch(blockedHtml, /First phone/);
+    assert.equal(pendingApprovalActions, undefined);
+
+    const replaceRequest = await fetch(`http://127.0.0.1:${server.port}/pair/request`, {
+      method: "POST",
+      headers: {
+        Origin: `http://127.0.0.1:${server.port}`,
+      },
+      redirect: "manual",
+    });
+    assert.equal(replaceRequest.status, 303);
+    assert.ok(pendingApprovalActions);
+
+    const pendingCookie = extractCookie(
+      replaceRequest.headers.get("set-cookie"),
+      "__Host-termi_pending",
+    );
+
+    const pendingPage = await fetch(`http://127.0.0.1:${server.port}/`, {
+      headers: {
+        Cookie: pendingCookie,
+      },
+    });
+    assert.equal(pendingPage.status, 200);
+    assert.match(await pendingPage.text(), /Approve This Browser/);
+
+    const closePromise = once(firstWs, "close");
+    assert.equal(pendingApprovalActions.approve(), true);
+
+    const statusResponse = await fetch(`http://127.0.0.1:${server.port}/pair/status`, {
+      headers: {
+        Cookie: pendingCookie,
+      },
+    });
+    assert.equal(statusResponse.status, 200);
+    assert.deepEqual(await statusResponse.json(), { status: "approved" });
+
+    const [closeCode] = await closePromise;
+    assert.equal(closeCode, 4001);
+
+    const replacementCookie = extractCookie(
+      statusResponse.headers.get("set-cookie"),
+      "__Host-termi_trust",
+    );
+    const replacementPage = await fetch(`http://127.0.0.1:${server.port}/`, {
+      headers: {
+        Cookie: replacementCookie,
+      },
+    });
+    assert.equal(replacementPage.status, 200);
+    assert.match(await replacementPage.text(), /<title>Termi<\/title>/);
+  } finally {
+    server.close();
+  }
+});
+
+test("trusted browsers require an explicit takeover when another trusted browser is active", { skip: !runServerTests }, async () => {
+  const pty = new FakePty();
+  const first = createTrustedDevice("First phone");
+  const second = createTrustedDevice("Second phone");
+  const server = await startServer(
+    pty,
+    {
+      mode: "trusted-browser",
+      trustedDevices: [first.device, second.device],
+      onTrustedDevicesChange: () => {},
+      onPendingApprovalRequest: () => {},
+      onTrustedSessionReady: () => {},
+      mobileOnboardingSeen: false,
+      onMobileOnboardingSeen: () => {},
+    },
+    0,
+  );
+
+  try {
+    const firstPage = await fetch(`http://127.0.0.1:${server.port}/`, {
+      headers: {
+        Cookie: `__Host-termi_trust=${first.cookieValue}`,
+      },
+    });
+    assert.equal(firstPage.status, 200);
+    assert.match(await firstPage.text(), /<title>Termi<\/title>/);
+
+    const firstWs = new WebSocket(`ws://127.0.0.1:${server.port}/`, {
+      headers: {
+        Cookie: `__Host-termi_trust=${first.cookieValue}`,
+        Origin: `http://127.0.0.1:${server.port}`,
+      },
+    });
+    await once(firstWs, "open");
+
+    const blockedPage = await fetch(`http://127.0.0.1:${server.port}/`, {
+      headers: {
+        Cookie: `__Host-termi_trust=${second.cookieValue}`,
+      },
+    });
+    assert.equal(blockedPage.status, 200);
+    assert.match(await blockedPage.text(), /Take Over Session/);
+
+    const closePromise = once(firstWs, "close");
+    const takeoverResponse = await fetch(`http://127.0.0.1:${server.port}/takeover`, {
+      method: "POST",
+      headers: {
+        Cookie: `__Host-termi_trust=${second.cookieValue}`,
+        Origin: `http://127.0.0.1:${server.port}`,
+      },
+      redirect: "manual",
+    });
+    assert.equal(takeoverResponse.status, 303);
+
+    const [closeCode] = await closePromise;
+    assert.equal(closeCode, 4001);
+
+    const secondPage = await fetch(`http://127.0.0.1:${server.port}/`, {
+      headers: {
+        Cookie: `__Host-termi_trust=${second.cookieValue}`,
+      },
+    });
+    assert.equal(secondPage.status, 200);
+    assert.match(await secondPage.text(), /<title>Termi<\/title>/);
   } finally {
     server.close();
   }

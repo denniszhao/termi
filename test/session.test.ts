@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createBufferedOutputBridge } from "../src/session.ts";
+import { createBufferedOutputBridge, createLocalTerminalInputController } from "../src/session.ts";
 import type { PtyHandle } from "../src/pty-manager.ts";
 
 class FakePty implements PtyHandle {
@@ -45,4 +45,14 @@ test("buffered output bridge caps early output before attach", () => {
 
   assert.ok(output.length <= 512 * 1024);
   assert.equal(output.endsWith("c".repeat(64)), true);
+});
+
+test("local terminal input controller can pause and resume forwarding", () => {
+  const pty = new FakePty();
+  const controller = createLocalTerminalInputController(pty);
+
+  controller.attach();
+  assert.equal(controller.isAttached(), true);
+  controller.pause();
+  assert.equal(controller.isAttached(), false);
 });

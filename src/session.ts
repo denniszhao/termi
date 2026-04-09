@@ -9,6 +9,12 @@ export interface BufferedOutputBridge {
   attach(): void;
 }
 
+export interface LocalTerminalInputController {
+  attach(): void;
+  isAttached(): boolean;
+  pause(): void;
+}
+
 export function createBufferedOutputBridge(pty: PtyHandle): BufferedOutputBridge {
   const earlyBuffer: string[] = [];
   let earlyBufferBytes = 0;
@@ -54,7 +60,7 @@ export function createBufferedOutputBridge(pty: PtyHandle): BufferedOutputBridge
   };
 }
 
-export function attachLocalTerminalInput(pty: PtyHandle): () => void {
+export function createLocalTerminalInputController(pty: PtyHandle): LocalTerminalInputController {
   const onData = (data: Buffer | string) => {
     pty.write(data.toString());
   };
@@ -65,21 +71,37 @@ export function attachLocalTerminalInput(pty: PtyHandle): () => void {
     pty.resize(cols, rows);
   };
 
-  if (process.stdin.isTTY) {
-    process.stdin.setRawMode(true);
-  }
-  process.stdin.resume();
-  process.stdin.on("data", onData);
-  process.stdout.on("resize", onResize);
+  let attached = false;
 
-  return () => {
-    process.stdin.off("data", onData);
-    process.stdout.off("resize", onResize);
+  return {
+    attach: () => {
+      if (attached) {
+        return;
+      }
 
-    if (process.stdin.isTTY && process.stdin.isRaw) {
-      process.stdin.setRawMode(false);
-    }
-    process.stdin.pause();
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(true);
+      }
+      process.stdin.resume();
+      process.stdin.on("data", onData);
+      process.stdout.on("resize", onResize);
+      attached = true;
+    },
+    isAttached: () => attached,
+    pause: () => {
+      if (!attached) {
+        return;
+      }
+
+      process.stdin.off("data", onData);
+      process.stdout.off("resize", onResize);
+
+      if (process.stdin.isTTY && process.stdin.isRaw) {
+        process.stdin.setRawMode(false);
+      }
+      process.stdin.pause();
+      attached = false;
+    },
   };
 }
 

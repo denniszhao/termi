@@ -79,6 +79,11 @@ const layout = createLayoutController({
 
 socket = createTerminalSocket({
   wsUrl,
+  onSessionReplaced: () => {
+    if (!token) {
+      window.location.href = "/";
+    }
+  },
   onData: (data) => {
     term.write(data);
   },

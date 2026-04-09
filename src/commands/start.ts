@@ -1,13 +1,12 @@
 import { outro, spinner } from "@clack/prompts";
 import { runWizard } from "../wizard.js";
-import { createPairingManager } from "../pairing.js";
-import { createPairingCodeAnnouncer } from "../pairing-announcer.js";
 import { spawnPty } from "../pty-manager.js";
-import { startServer, type ServerAuth } from "../server.js";
+import { startServer, type PendingApprovalInfo, type ServerAuth } from "../server.js";
 import { startTunnel, startNamedTunnel, TunnelHandle } from "../tunnel.js";
 import {
   printBanner,
-  printPairingCode,
+  printPendingApprovalRequest,
+  printPendingApprovalResult,
   printPersistentAccessInfo,
   printSessionInfo,
   printTrustedBrowserConnected,
@@ -15,11 +14,12 @@ import {
 } from "../display.js";
 import { getVersion } from "../version.js";
 import {
-  attachLocalTerminalInput,
   createBufferedOutputBridge,
+  createLocalTerminalInputController,
   createSessionCleanup,
 } from "../session.js";
 import { getMobileOnboardingSeen, markMobileOnboardingSeen, saveConfig } from "../config.js";
+import { promptForLocalApproval } from "../local-approval.js";
 
 async function openRemoteTunnel(
   config: Awaited<ReturnType<typeof runWizard>>,
@@ -58,22 +58,16 @@ function getTunnelFailureMessage(config: Awaited<ReturnType<typeof runWizard>>):
 function createServerAuth(
   config: Awaited<ReturnType<typeof runWizard>>,
   onTrustedSessionReady: () => void,
+  onPendingApprovalRequest: (
+    request: PendingApprovalInfo,
+    actions: { approve(): boolean; reject(message?: string): boolean },
+  ) => void,
 ): ServerAuth {
   const mobileOnboardingSeen = getMobileOnboardingSeen();
 
   if (config.mode === "persistent" && config.savedConfig) {
-    const pairingCodeAnnouncer = createPairingCodeAnnouncer((code) => {
-      printPairingCode(code);
-    });
-    const pairing = createPairingManager((code, reason) => {
-      if (reason === "expired") {
-        pairingCodeAnnouncer.announce(code);
-      }
-    });
-
     return {
       mode: "trusted-browser",
-      pairing,
       trustedDevices: config.savedConfig.trustedDevices,
       mobileOnboardingSeen,
       onTrustedDevicesChange: (trustedDevices) => {
@@ -83,11 +77,9 @@ function createServerAuth(
         };
         saveConfig(config.savedConfig);
       },
+      onPendingApprovalRequest,
       onMobileOnboardingSeen: () => {
         markMobileOnboardingSeen();
-      },
-      onPairingRequired: (code) => {
-        pairingCodeAnnouncer.announce(code);
       },
       onTrustedSessionReady,
     };
@@ -113,25 +105,25 @@ export async function startCommand(): Promise<void> {
   const rows = process.stdout.rows || 24;
   const pty = spawnPty(config.shell, cols, rows);
   const outputBridge = createBufferedOutputBridge(pty);
-  let detachLocalInput = () => {};
-  let localTerminalAttached = false;
+  const localInput = createLocalTerminalInputController(pty);
+  let localTerminalOutputAttached = false;
   let localTerminalMayAttach = false;
   let trustedSessionReady = false;
   let trustedAttachMessagePrinted = false;
+  let approvalPromptActive = false;
 
   function attachLocalTerminal(): void {
-    if (localTerminalAttached) {
-      return;
+    if (!localTerminalOutputAttached) {
+      if (config.mode === "persistent" && !trustedAttachMessagePrinted) {
+        trustedAttachMessagePrinted = true;
+        printTrustedBrowserConnected();
+      }
+
+      outputBridge.attach();
+      localTerminalOutputAttached = true;
     }
 
-    if (config.mode === "persistent" && !trustedAttachMessagePrinted) {
-      trustedAttachMessagePrinted = true;
-      printTrustedBrowserConnected();
-    }
-
-    localTerminalAttached = true;
-    detachLocalInput = attachLocalTerminalInput(pty);
-    outputBridge.attach();
+    localInput.attach();
   }
 
   function markTrustedSessionReady(): void {
@@ -141,7 +133,81 @@ export async function startCommand(): Promise<void> {
     }
   }
 
-  const serverAuth = createServerAuth(config, markTrustedSessionReady);
+  async function handlePendingApprovalRequest(
+    request: PendingApprovalInfo,
+    actions: { approve(): boolean; reject(message?: string): boolean },
+  ): Promise<void> {
+    if (approvalPromptActive || !process.stdin.isTTY) {
+      actions.reject("Local approval is unavailable right now.");
+      renderApprovalResult("Local approval is unavailable right now.");
+      return;
+    }
+
+    const shouldPauseLocalInput = localInput.isAttached();
+    approvalPromptActive = true;
+    try {
+      if (shouldPauseLocalInput) {
+        localInput.pause();
+      }
+
+      renderApprovalNoticeBlock(request);
+
+      const approved = await promptForLocalApproval({
+        code: request.code,
+        intent: request.intent,
+        label: request.label,
+      });
+      const handled = approved
+        ? actions.approve()
+        : actions.reject("Browser approval rejected.");
+
+      renderApprovalResult(
+        handled
+          ? approved
+            ? "Browser approved. It can now finish pairing."
+            : "Browser approval rejected."
+          : "That approval request is no longer pending.",
+      );
+    } finally {
+      if (shouldPauseLocalInput) {
+        localInput.attach();
+      }
+      approvalPromptActive = false;
+    }
+  }
+
+  function renderApprovalNoticeBlock(request: PendingApprovalInfo): void {
+    if (localTerminalOutputAttached) {
+      process.stdout.write("\r\n\r\n");
+      process.stdout.write("  ───────────────────────────────\r\n");
+    }
+
+    printPendingApprovalRequest(request.label, request.code, request.intent);
+
+    if (localTerminalOutputAttached) {
+      process.stdout.write("  ───────────────────────────────\r\n\r\n");
+    }
+  }
+
+  function renderApprovalResult(message: string): void {
+    if (localTerminalOutputAttached) {
+      process.stdout.write("\r\n");
+    }
+
+    printPendingApprovalResult(message);
+
+    if (localTerminalOutputAttached) {
+      process.stdout.write("\r\n");
+    }
+  }
+
+  const serverAuth = createServerAuth(
+    config,
+    markTrustedSessionReady,
+    (request, actions) => {
+      void handlePendingApprovalRequest(request, actions);
+    },
+  );
   const server = await startServer(pty, serverAuth, config.port);
 
   let tunnel: TunnelHandle | undefined;
@@ -177,7 +243,7 @@ export async function startCommand(): Promise<void> {
     attachLocalTerminal();
   }
 
-  const cleanup = createSessionCleanup(pty, server, () => detachLocalInput(), () => tunnel);
+  const cleanup = createSessionCleanup(pty, server, () => localInput.pause(), () => tunnel);
 
   process.on("SIGINT", cleanup);
   process.on("SIGTERM", cleanup);
