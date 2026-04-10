@@ -4,6 +4,10 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { credentialsPath, tmpDir, writeSecureFile } from "./config.js";
 
+function yamlQuote(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
 export interface TunnelHandle {
   url: string;
   kill(): void;
@@ -88,10 +92,10 @@ export function startNamedTunnel(
   const credPath = credentialsPath();
 
   const yml = [
-    `tunnel: ${tunnelId}`,
-    `credentials-file: ${credPath}`,
+    `tunnel: ${yamlQuote(tunnelId)}`,
+    `credentials-file: ${yamlQuote(credPath)}`,
     `ingress:`,
-    `  - hostname: ${domain}`,
+    `  - hostname: ${yamlQuote(domain)}`,
     `    service: http://127.0.0.1:${localPort}`,
     `  - service: http_status:404`,
   ].join("\n") + "\n";
