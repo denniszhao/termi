@@ -8,6 +8,7 @@ export type TerminalSocketState = "connecting" | "connected" | "reconnecting" | 
 
 interface CreateTerminalSocketOptions {
   wsUrl: string;
+  onSessionEnded?: () => void;
   onSessionReplaced?: () => void;
   onData: (data: string) => void;
   onOpen: () => void;
@@ -17,7 +18,7 @@ interface CreateTerminalSocketOptions {
 export function createTerminalSocket(
   options: CreateTerminalSocketOptions,
 ): TerminalSocketController {
-  const { wsUrl, onData, onOpen, onSessionReplaced, onStateChange } = options;
+  const { wsUrl, onData, onOpen, onSessionEnded, onSessionReplaced, onStateChange } = options;
   let ws: WebSocket | undefined;
   let reconnectTimer: number | undefined;
 
@@ -59,14 +60,16 @@ export function createTerminalSocket(
       if (ws !== socket) {
         return;
       }
+      ws = undefined;
+      onStateChange("disconnected");
+      if (event.code === 4000) {
+        onSessionEnded?.();
+        return;
+      }
       if (event.code === 4001) {
-        ws = undefined;
-        onStateChange("disconnected");
         onSessionReplaced?.();
         return;
       }
-      ws = undefined;
-      onStateChange("disconnected");
       scheduleReconnect();
     };
 

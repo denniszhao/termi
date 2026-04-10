@@ -1,19 +1,9 @@
-import { cancel, confirm, isCancel, select } from "@clack/prompts";
+import { confirm, select } from "@clack/prompts";
 import { clearTrustedDevices, listTrustedDevices, removeTrustedDevice } from "../config.js";
-import { formatTrustedDevice } from "../trusted-device-display.js";
+import { handleCancel } from "../prompt-utils.js";
+import { compareTrustedDevices, formatTrustedDevice } from "../trusted-device-display.js";
 
 const REVOKE_ALL = "__all__";
-
-function handleCancel<T>(value: T): asserts value is Exclude<T, symbol> {
-  if (isCancel(value)) {
-    cancel("Cancelled.");
-    process.exit(0);
-  }
-}
-
-function compareTrustedDevices(a: { lastSeenAt: string }, b: { lastSeenAt: string }): number {
-  return b.lastSeenAt.localeCompare(a.lastSeenAt);
-}
 
 export async function revokeCommand(): Promise<void> {
   const trustedDevices = listTrustedDevices().sort(compareTrustedDevices);

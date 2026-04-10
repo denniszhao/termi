@@ -32,12 +32,11 @@ export function getHtml(options: HtmlOptions): string {
   <div id="trackpad-hint">&larr; &rarr; &uarr; &darr;</div>
   <button id="kb-toggle" type="button">&#9000;</button>
   <div id="keyboard"></div>
-  <div id="remote-exit-notice" hidden>
-    <div id="remote-exit-card" role="dialog" aria-modal="true" aria-labelledby="remote-exit-title">
-      <h2 id="remote-exit-title">Keep This Session Running</h2>
-      <p>Close this tab to disconnect this browser.</p>
-      <p>To end the Termi session itself, use the local device where Termi was started.</p>
-      <button id="remote-exit-dismiss" type="button">Got it</button>
+  <div id="notice-overlay" hidden>
+    <div id="notice-card" role="dialog" aria-modal="true">
+      <h2 id="notice-title"></h2>
+      <div id="notice-body"></div>
+      <button id="notice-dismiss" type="button" hidden>Got it</button>
     </div>
   </div>
   <div id="onboarding-backdrop">
@@ -64,43 +63,15 @@ export function getPendingApprovalHtml(options: {
 }): string {
   const bootstrap = serializeJsonForHtml(options);
 
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Approve Termi</title>
-  <style>
-    :root {
-      color-scheme: dark;
-      font-family: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      background: #111827;
-      color: #f3f4f6;
-      padding: 24px;
-    }
-    .pairing-card {
-      width: min(100%, 400px);
-      background: #1f2937;
-      border: 1px solid #374151;
-      border-radius: 18px;
-      padding: 24px;
-      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
-    }
-    h1 {
-      margin: 0 0 12px;
-      font-size: 24px;
-    }
-    p {
-      margin: 0 0 16px;
-      color: #d1d5db;
-      line-height: 1.5;
-    }
+  return pairingPageHtml("Approve Termi", `
+    <h1>Approve This Browser</h1>
+    <p id="pairing-status">Check that the same 6-character code is shown in your local terminal, then approve it there.</p>
+    <div id="pairing-details">
+      <div class="pairing-code">${escapeHtml(options.code)}</div>
+      <p class="pairing-meta">Browser label: ${escapeHtml(options.label)}</p>
+      <p class="pairing-meta">Approval expires at ${escapeHtml(new Date(options.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}.</p>
+    </div>
+  `, `
     .pairing-code {
       margin: 0 0 16px;
       border: 1px solid #4b5563;
@@ -116,18 +87,7 @@ export function getPendingApprovalHtml(options: {
       font-size: 14px;
       color: #9ca3af;
     }
-  </style>
-</head>
-<body>
-  <main class="pairing-card">
-    <h1>Approve This Browser</h1>
-    <p id="pairing-status">Check that the same 6-character code is shown in your local terminal, then approve it there.</p>
-    <div id="pairing-details">
-      <div class="pairing-code">${escapeHtml(options.code)}</div>
-      <p class="pairing-meta">Browser label: ${escapeHtml(options.label)}</p>
-      <p class="pairing-meta">Approval expires at ${escapeHtml(new Date(options.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}.</p>
-    </div>
-  </main>
+  `, `
   <script id="termi-pending-bootstrap" type="application/json">${bootstrap}</script>
   <script>
     const bootstrap = JSON.parse(document.getElementById("termi-pending-bootstrap").textContent || "{}");
@@ -164,98 +124,39 @@ export function getPendingApprovalHtml(options: {
 
     timer = window.setInterval(pollStatus, 2000);
     void pollStatus();
-  </script>
-</body>
-</html>`;
+  </script>`);
 }
 
 export function getApprovalBusyHtml(message: string): string {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Approval Pending</title>
-  <style>
-    :root {
-      color-scheme: dark;
-      font-family: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      background: #111827;
-      color: #f3f4f6;
-      padding: 24px;
-    }
-    .pairing-card {
-      width: min(100%, 400px);
-      background: #1f2937;
-      border: 1px solid #374151;
-      border-radius: 18px;
-      padding: 24px;
-      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
-    }
-    h1 {
-      margin: 0 0 12px;
-      font-size: 24px;
-    }
-    p {
-      margin: 0 0 16px;
-      color: #d1d5db;
-      line-height: 1.5;
-    }
-  </style>
-</head>
-<body>
-  <main class="pairing-card">
+  return pairingPageHtml("Approval Pending", `
     <h1>Approval Already In Progress</h1>
     <p>${escapeHtml(message)}</p>
-  </main>
-</body>
-</html>`;
+  `);
 }
 
 export function getReplaceSessionHtml(): string {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Pair This Browser Instead</title>
-  <style>
-    :root {
-      color-scheme: dark;
-      font-family: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      background: #111827;
-      color: #f3f4f6;
-      padding: 24px;
-    }
-    .pairing-card {
-      width: min(100%, 400px);
-      background: #1f2937;
-      border: 1px solid #374151;
-      border-radius: 18px;
-      padding: 24px;
-      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
-    }
-    h1 {
-      margin: 0 0 12px;
-      font-size: 24px;
-    }
-    p {
-      margin: 0 0 16px;
-      color: #d1d5db;
-      line-height: 1.5;
-    }
+  return pairingPageHtml("Pair This Browser Instead", `
+    <h1>Session Already Active</h1>
+    <p>This terminal is currently active on another trusted browser.</p>
+    <p>Pair this browser instead if you want it to replace the current remote session after local approval.</p>
+    <form method="post" action="/pair/request">
+      <button type="submit">Pair This Browser Instead</button>
+    </form>
+  `, BUTTON_CSS_GREEN);
+}
+
+export function getActiveSessionHtml(options: { activeDeviceLabel: string }): string {
+  return pairingPageHtml("Session In Use", `
+    <h1>Session Already Active</h1>
+    <p>This terminal is currently open on ${escapeHtml(options.activeDeviceLabel)}.</p>
+    <p>You can take over the live session from this trusted browser.</p>
+    <form method="post" action="/takeover">
+      <button type="submit">Take Over Session</button>
+    </form>
+  `, BUTTON_CSS_AMBER);
+}
+
+const BUTTON_CSS_GREEN = `
     button {
       width: 100%;
       border: 0;
@@ -265,29 +166,27 @@ export function getReplaceSessionHtml(): string {
       font-weight: 700;
       background: #10b981;
       color: #052e2b;
-    }
-  </style>
-</head>
-<body>
-  <main class="pairing-card">
-    <h1>Session Already Active</h1>
-    <p>This terminal is currently active on another trusted browser.</p>
-    <p>Pair this browser instead if you want it to replace the current remote session after local approval.</p>
-    <form method="post" action="/pair/request">
-      <button type="submit">Pair This Browser Instead</button>
-    </form>
-  </main>
-</body>
-</html>`;
-}
+    }`;
 
-export function getActiveSessionHtml(options: { activeDeviceLabel: string }): string {
+const BUTTON_CSS_AMBER = `
+    button {
+      width: 100%;
+      border: 0;
+      border-radius: 12px;
+      padding: 14px 16px;
+      font: inherit;
+      font-weight: 700;
+      background: #f59e0b;
+      color: #1f1300;
+    }`;
+
+function pairingPageHtml(title: string, body: string, extraCss = "", afterBody = ""): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Session In Use</title>
+  <title>${escapeHtml(title)}</title>
   <style>
     :root {
       color-scheme: dark;
@@ -318,28 +217,12 @@ export function getActiveSessionHtml(options: { activeDeviceLabel: string }): st
       margin: 0 0 16px;
       color: #d1d5db;
       line-height: 1.5;
-    }
-    button {
-      width: 100%;
-      border: 0;
-      border-radius: 12px;
-      padding: 14px 16px;
-      font: inherit;
-      font-weight: 700;
-      background: #f59e0b;
-      color: #1f1300;
-    }
+    }${extraCss}
   </style>
 </head>
 <body>
-  <main class="pairing-card">
-    <h1>Session Already Active</h1>
-    <p>This terminal is currently open on ${escapeHtml(options.activeDeviceLabel)}.</p>
-    <p>You can take over the live session from this trusted browser.</p>
-    <form method="post" action="/takeover">
-      <button type="submit">Take Over Session</button>
-    </form>
-  </main>
+  <main class="pairing-card">${body}
+  </main>${afterBody}
 </body>
 </html>`;
 }

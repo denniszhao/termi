@@ -172,7 +172,7 @@ body {
   display: flex;
 }
 
-#remote-exit-notice {
+#notice-overlay {
   position: fixed;
   inset: 0;
   display: grid;
@@ -182,11 +182,11 @@ body {
   z-index: 40;
 }
 
-#remote-exit-notice[hidden] {
+#notice-overlay[hidden] {
   display: none;
 }
 
-#remote-exit-card {
+#notice-card {
   width: min(100%, 360px);
   padding: 18px 18px 16px;
   border: 1px solid #374151;
@@ -195,18 +195,18 @@ body {
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
 }
 
-#remote-exit-card h2 {
+#notice-card h2 {
   margin-bottom: 10px;
   font-size: 18px;
 }
 
-#remote-exit-card p {
+#notice-card p {
   color: #d1d5db;
   line-height: 1.45;
   margin-bottom: 10px;
 }
 
-#remote-exit-dismiss {
+#notice-dismiss {
   margin-top: 4px;
   width: 100%;
   border: 0;
@@ -216,6 +216,10 @@ body {
   color: #052e16;
   font: inherit;
   font-weight: 700;
+}
+
+#notice-dismiss[hidden] {
+  display: none;
 }
 
 .kb-row {
