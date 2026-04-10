@@ -1,9 +1,5 @@
 import { listTrustedDevices } from "../config.js";
-import { formatTrustedDevice } from "../trusted-device-display.js";
-
-function compareTrustedDevices(a: { lastSeenAt: string }, b: { lastSeenAt: string }): number {
-  return b.lastSeenAt.localeCompare(a.lastSeenAt);
-}
+import { compareTrustedDevices, formatTrustedDevice } from "../trusted-device-display.js";
 
 export async function devicesCommand(): Promise<void> {
   const trustedDevices = listTrustedDevices().sort(compareTrustedDevices);

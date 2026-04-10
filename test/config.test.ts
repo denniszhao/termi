@@ -80,9 +80,15 @@ test("trusted device helpers remove one device or clear them all", async () => {
   assert.equal(config.clearTrustedDevices(), 0);
 });
 
-test("mobile onboarding state is persisted independently of session mode", async () => {
+test("mobile onboarding state is persisted when a config already exists", async () => {
   const tempHome = mkdtempSync(join(tmpdir(), "termi-home-"));
   const config = await importFreshConfigModule(tempHome);
+
+  config.saveConfig({
+    tunnel: { id: "t-1", name: "termi-001", domain: "termi-001.example.com" },
+    trustedDevices: [],
+    mobileOnboardingSeen: false,
+  });
 
   assert.equal(config.getMobileOnboardingSeen(), false);
   config.markMobileOnboardingSeen();
@@ -90,5 +96,15 @@ test("mobile onboarding state is persisted independently of session mode", async
 
   const saved = config.loadConfig();
   assert.equal(saved?.mobileOnboardingSeen, true);
-  assert.deepEqual(saved?.trustedDevices ?? [], []);
+  assert.equal(saved?.tunnel.id, "t-1");
+});
+
+test("markMobileOnboardingSeen is a no-op without an existing config", async () => {
+  const tempHome = mkdtempSync(join(tmpdir(), "termi-home-"));
+  const config = await importFreshConfigModule(tempHome);
+
+  assert.equal(config.getMobileOnboardingSeen(), false);
+  config.markMobileOnboardingSeen();
+  assert.equal(config.getMobileOnboardingSeen(), false);
+  assert.equal(config.loadConfig(), null);
 });

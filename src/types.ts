@@ -1,10 +1,3 @@
-export interface TermiConfig {
-  mode: "tunnel" | "persistent";
-  port: number;
-  shell: string;
-  token?: string;
-}
-
 export interface TrustedDevice {
   id: string;
   secretHash: string;

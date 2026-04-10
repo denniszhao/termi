@@ -166,8 +166,13 @@ export function startTunnel(
       if (url) {
         resolved = true;
         clearTimeout(timeout);
-        waitForTunnelReady(url).then(() => {
-          resolve(createTunnelHandle(proc, url));
+        waitForTunnelReady(url).then((ready) => {
+          if (ready) {
+            resolve(createTunnelHandle(proc, url));
+          } else {
+            proc.kill("SIGTERM");
+            reject(new Error("Tunnel URL was allocated but health check never succeeded"));
+          }
         });
       }
     }

@@ -3,14 +3,13 @@ import {
   select,
   text,
   confirm,
-  cancel,
-  isCancel,
   spinner,
   note,
 } from "@clack/prompts";
 import chalk from "chalk";
 import { BRAND, DEFAULT_PORT } from "./constants.js";
 import { generateToken } from "./auth.js";
+import { handleCancel } from "./prompt-utils.js";
 import {
   findCloudflared,
   downloadCloudflared,
@@ -38,13 +37,6 @@ import {
   parseCertToken,
   routeTunnelDns,
 } from "./cloudflare.js";
-
-function handleCancel<T>(value: T): asserts value is Exclude<T, symbol> {
-  if (isCancel(value)) {
-    cancel("Cancelled.");
-    process.exit(0);
-  }
-}
 
 function randomDigits(n: number): string {
   let s = "";

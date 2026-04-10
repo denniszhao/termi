@@ -92,7 +92,7 @@ function hashSecret(secret: string): string {
   return createHash("sha256").update(secret).digest("base64url");
 }
 
-function getHeaderValue(value: string | string[] | undefined): string {
+export function getHeaderValue(value: string | string[] | undefined): string {
   if (Array.isArray(value)) {
     return value[0] ?? "";
   }

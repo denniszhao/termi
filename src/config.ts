@@ -47,17 +47,12 @@ export function getMobileOnboardingSeen(): boolean {
 
 export function markMobileOnboardingSeen(): void {
   const config = loadConfig();
-  if (config?.mobileOnboardingSeen) {
+  if (!config || config.mobileOnboardingSeen) {
     return;
   }
 
   saveConfig({
-    tunnel: config?.tunnel ?? {
-      id: "",
-      name: "",
-      domain: "",
-    },
-    trustedDevices: config?.trustedDevices ?? [],
+    ...config,
     mobileOnboardingSeen: true,
   });
 }

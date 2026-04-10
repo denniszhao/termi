@@ -37,22 +37,14 @@ async function openRemoteTunnel(
   return startTunnel(config.cloudflaredPath, port);
 }
 
-function getTunnelSpinnerMessage(config: Awaited<ReturnType<typeof runWizard>>): string {
+function getTunnelMessages(config: Awaited<ReturnType<typeof runWizard>>): {
+  spinner: string;
+  success: string;
+  failure: string;
+} {
   return config.mode === "persistent" && config.savedConfig
-    ? "Connecting tunnel..."
-    : "Opening tunnel (waiting for DNS)...";
-}
-
-function getTunnelSuccessMessage(config: Awaited<ReturnType<typeof runWizard>>): string {
-  return config.mode === "persistent" && config.savedConfig
-    ? "Tunnel connected."
-    : "Tunnel ready.";
-}
-
-function getTunnelFailureMessage(config: Awaited<ReturnType<typeof runWizard>>): string {
-  return config.mode === "persistent" && config.savedConfig
-    ? "Failed to connect tunnel"
-    : "Failed to start tunnel";
+    ? { spinner: "Connecting tunnel...", success: "Tunnel connected.", failure: "Failed to connect tunnel" }
+    : { spinner: "Opening tunnel (waiting for DNS)...", success: "Tunnel ready.", failure: "Failed to start tunnel" };
 }
 
 function createServerAuth(
@@ -211,15 +203,16 @@ export async function startCommand(): Promise<void> {
   const server = await startServer(pty, serverAuth, config.port);
 
   let tunnel: TunnelHandle | undefined;
+  const tunnelMessages = getTunnelMessages(config);
   const tunnelSpinner = spinner();
-  tunnelSpinner.start(getTunnelSpinnerMessage(config));
+  tunnelSpinner.start(tunnelMessages.spinner);
   try {
     tunnel = await openRemoteTunnel(config, server.port);
-    tunnelSpinner.stop(getTunnelSuccessMessage(config));
+    tunnelSpinner.stop(tunnelMessages.success);
   } catch (err) {
     tunnelSpinner.stop("Tunnel failed.");
     console.error(
-      `\n  ${getTunnelFailureMessage(config)}: ${err instanceof Error ? err.message : err}`,
+      `\n  ${tunnelMessages.failure}: ${err instanceof Error ? err.message : err}`,
     );
     if (config.mode === "persistent" && config.savedConfig) {
       console.error("  Run 'termi reset' to reconfigure.\n");

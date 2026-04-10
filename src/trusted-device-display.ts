@@ -1,5 +1,9 @@
 import type { TrustedDevice } from "./types.js";
 
+export function compareTrustedDevices(a: { lastSeenAt: string }, b: { lastSeenAt: string }): number {
+  return b.lastSeenAt.localeCompare(a.lastSeenAt);
+}
+
 export function formatTrustedDevice(device: TrustedDevice): string {
   const label = device.label ? `${device.label}  ` : "";
   return `${label}${shortTrustedDeviceId(device.id)}  last seen ${formatTrustedDeviceTime(device.lastSeenAt)}  created ${formatTrustedDeviceTime(device.createdAt)}`;

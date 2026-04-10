@@ -10,6 +10,7 @@ import {
   TRUSTED_DEVICE_COOKIE,
   addTrustedDevice,
   createTrustedDevice,
+  getHeaderValue,
   inferTrustedDeviceLabel,
   touchTrustedDevice,
   verifyTrustedDeviceCookie,
@@ -109,6 +110,18 @@ export function startServer(
   const publicDir = resolvePublicDir();
   const appJs = readFileSync(join(publicDir, "app.js"));
   const appCss = readFileSync(join(publicDir, "app.css"));
+
+  const CACHED = "public, max-age=86400";
+  const NO_STORE = "no-store";
+  const STATIC_ASSETS: Record<string, { contentType: string; cache: string; body: Buffer | string }> = {
+    "/icon-192.png":       { contentType: "image/png", cache: CACHED, body: icon192 },
+    "/favicon-96x96.png":  { contentType: "image/png", cache: CACHED, body: favicon96 },
+    "/favicon.ico":        { contentType: "image/x-icon", cache: CACHED, body: faviconIco },
+    "/manifest.json":      { contentType: "application/json", cache: CACHED, body: manifest },
+    "/app.js":             { contentType: "application/javascript; charset=utf-8", cache: NO_STORE, body: appJs },
+    "/app.css":            { contentType: "text/css; charset=utf-8", cache: NO_STORE, body: appCss },
+  };
+
   const clients = new Set<WebSocket>();
   const history: string[] = [];
   let activeClient:
@@ -345,7 +358,7 @@ export function startServer(
           return true;
         }
       } catch {
-        return false;
+        continue;
       }
     }
 
@@ -401,7 +414,7 @@ export function startServer(
       };
     }
 
-    if (activeClient?.deviceId !== null && activeClient !== undefined) {
+    if (activeClient !== undefined && activeClient.deviceId !== null) {
       return { kind: "replace-required" };
     }
 
@@ -434,6 +447,33 @@ export function startServer(
     );
   }
 
+  function sendApprovalBlockedResponse(
+    res: http.ServerResponse,
+    state: UntrustedBrowserState,
+  ): boolean {
+    if (state.kind === "approval-unavailable") {
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        "Set-Cookie": serializeCookie(PENDING_APPROVAL_COOKIE, "", 0),
+      });
+      res.end(getApprovalBusyHtml(state.message));
+      clearPendingApproval();
+      return true;
+    }
+
+    if (state.kind === "approval-busy") {
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      res.end(getApprovalBusyHtml(state.message));
+      return true;
+    }
+
+    return false;
+  }
+
   const server = http.createServer((req, res) => {
     const url = parseRequestUrl(req);
     if (!url) {
@@ -448,45 +488,13 @@ export function startServer(
       return;
     }
 
-    if (url.pathname === "/icon-192.png") {
-      res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" });
-      res.end(icon192);
-      return;
-    }
-
-    if (url.pathname === "/favicon-96x96.png") {
-      res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" });
-      res.end(favicon96);
-      return;
-    }
-
-    if (url.pathname === "/favicon.ico") {
-      res.writeHead(200, { "Content-Type": "image/x-icon", "Cache-Control": "public, max-age=86400" });
-      res.end(faviconIco);
-      return;
-    }
-
-    if (url.pathname === "/manifest.json") {
-      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "public, max-age=86400" });
-      res.end(manifest);
-      return;
-    }
-
-    if (url.pathname === "/app.js") {
+    const staticAsset = STATIC_ASSETS[url.pathname];
+    if (staticAsset) {
       res.writeHead(200, {
-        "Content-Type": "application/javascript; charset=utf-8",
-        "Cache-Control": "no-store",
+        "Content-Type": staticAsset.contentType,
+        "Cache-Control": staticAsset.cache,
       });
-      res.end(appJs);
-      return;
-    }
-
-    if (url.pathname === "/app.css") {
-      res.writeHead(200, {
-        "Content-Type": "text/css; charset=utf-8",
-        "Cache-Control": "no-store",
-      });
-      res.end(appCss);
+      res.end(staticAsset.body);
       return;
     }
 
@@ -506,14 +514,7 @@ export function startServer(
             ? beginPendingApproval(req, "trust")
             : state;
 
-          if (resolvedState.kind === "approval-unavailable") {
-            res.writeHead(200, {
-              "Content-Type": "text/html; charset=utf-8",
-              "Cache-Control": "no-store",
-              "Set-Cookie": serializeCookie(PENDING_APPROVAL_COOKIE, "", 0),
-            });
-            res.end(getApprovalBusyHtml(resolvedState.message));
-            clearPendingApproval();
+          if (sendApprovalBlockedResponse(res, resolvedState)) {
             return;
           }
 
@@ -523,15 +524,6 @@ export function startServer(
               "Cache-Control": "no-store",
             });
             res.end(getReplaceSessionHtml());
-            return;
-          }
-
-          if (resolvedState.kind === "approval-busy") {
-            res.writeHead(200, {
-              "Content-Type": "text/html; charset=utf-8",
-              "Cache-Control": "no-store",
-            });
-            res.end(getApprovalBusyHtml(resolvedState.message));
             return;
           }
 
@@ -667,30 +659,14 @@ export function startServer(
       }
 
       const state = getUntrustedBrowserState(req);
-      const intent = activeClient?.deviceId !== null && activeClient !== undefined
+      const intent = activeClient !== undefined && activeClient.deviceId !== null
         ? "replace-active-session"
         : "trust";
       const resolvedState = state.kind === "trust-available" || state.kind === "replace-required"
         ? beginPendingApproval(req, intent)
         : state;
 
-      if (resolvedState.kind === "approval-unavailable") {
-        res.writeHead(200, {
-          "Content-Type": "text/html; charset=utf-8",
-          "Cache-Control": "no-store",
-          "Set-Cookie": serializeCookie(PENDING_APPROVAL_COOKIE, "", 0),
-        });
-        res.end(getApprovalBusyHtml(resolvedState.message));
-        clearPendingApproval();
-        return;
-      }
-
-      if (resolvedState.kind === "approval-busy") {
-        res.writeHead(200, {
-          "Content-Type": "text/html; charset=utf-8",
-          "Cache-Control": "no-store",
-        });
-        res.end(getApprovalBusyHtml(resolvedState.message));
+      if (sendApprovalBlockedResponse(res, resolvedState)) {
         return;
       }
 
@@ -894,6 +870,7 @@ export function startServer(
   return new Promise((resolve, reject) => {
     const tryListen = (p: number, attempts: number) => {
       server.listen(p, "127.0.0.1", () => {
+        server.removeAllListeners("error");
         const addr = server.address();
         const actualPort = typeof addr === "object" && addr ? addr.port : p;
         resolve({
@@ -921,11 +898,4 @@ export function startServer(
 
     tryListen(port, 10);
   });
-}
-
-function getHeaderValue(value: string | string[] | undefined): string {
-  if (Array.isArray(value)) {
-    return value[0] ?? "";
-  }
-  return value ?? "";
 }
