@@ -879,7 +879,7 @@ export function startServer(
             if (flushTimer) {
               clearTimeout(flushTimer);
             }
-            for (const ws of clients) ws.close();
+            for (const ws of clients) ws.close(4000, "Server shutting down");
             wss.close();
             server.close();
           },

@@ -22,8 +22,10 @@ const terminalBrandEl = mustGetElement<HTMLDivElement>("terminal-brand");
 const keyboardEl = mustGetElement<HTMLDivElement>("keyboard");
 const toggleButton = mustGetElement<HTMLButtonElement>("kb-toggle");
 const trackpadHint = mustGetElement<HTMLDivElement>("trackpad-hint");
-const remoteExitNotice = mustGetElement<HTMLDivElement>("remote-exit-notice");
-const remoteExitDismissButton = mustGetElement<HTMLButtonElement>("remote-exit-dismiss");
+const noticeOverlay = mustGetElement<HTMLDivElement>("notice-overlay");
+const noticeTitle = mustGetElement<HTMLHeadingElement>("notice-title");
+const noticeBody = mustGetElement<HTMLDivElement>("notice-body");
+const noticeDismiss = mustGetElement<HTMLButtonElement>("notice-dismiss");
 const onboardingBackdrop = mustGetElement<HTMLDivElement>("onboarding-backdrop");
 const onboardingDismissButton = mustGetElement<HTMLButtonElement>("onboarding-dismiss");
 const onboardingErrorEl = mustGetElement<HTMLParagraphElement>("onboarding-error");
@@ -46,11 +48,23 @@ if (helperTextarea) {
   helperTextarea.setAttribute("spellcheck", "false");
 }
 
+function showNotice(title: string, body: string, dismissable = false): void {
+  noticeTitle.textContent = title;
+  noticeBody.innerHTML = body;
+  noticeDismiss.hidden = !dismissable;
+  noticeOverlay.hidden = false;
+}
+
 let socket: TerminalSocketController;
 const status = createStatusController();
 const inputGuard = createTerminalInputGuard({
   onBlockedExitAttempt: () => {
-    remoteExitNotice.hidden = false;
+    showNotice(
+      "Keep This Session Running",
+      "<p>Close this tab to disconnect this browser.</p>"
+      + "<p>To end the Termi session itself, use the local device where Termi was started.</p>",
+      true,
+    );
   },
   onInput: (data) => {
     socket.sendData(data);
@@ -90,10 +104,19 @@ const layout = createLayoutController({
 
 socket = createTerminalSocket({
   wsUrl,
+  onSessionEnded: () => {
+    showNotice(
+      "Session Ended",
+      "<p>The Termi session was ended from the local device.</p>"
+      + "<p>You can close this tab.</p>",
+    );
+  },
   onSessionReplaced: () => {
-    if (!token) {
-      window.location.href = "/";
-    }
+    showNotice(
+      "Session Taken Over",
+      "<p>Another browser has taken over this terminal session.</p>"
+      + "<p>You can close this tab or refresh to reconnect.</p>",
+    );
   },
   onData: (data) => {
     term.write(data);
@@ -124,8 +147,8 @@ term.onData((data) => {
   inputGuard.send(data);
 });
 
-remoteExitDismissButton.addEventListener("click", () => {
-  remoteExitNotice.hidden = true;
+noticeDismiss.addEventListener("click", () => {
+  noticeOverlay.hidden = true;
 });
 
 keyboard.mount();
