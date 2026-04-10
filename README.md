@@ -6,48 +6,29 @@
 
 Turn a local shell into a phone-friendly terminal you can open from a QR code.
 
-Termi is a self-hosted Node.js CLI that runs a PTY on your machine, serves a lightweight mobile terminal UI, and exposes it through Cloudflare. It is built for checking output, keeping long-running sessions alive, and sending input from your phone without SSH or router setup.
+Termi is a self-hosted Node.js CLI that runs a PTY on your machine, serves a lightweight mobile terminal UI, and exposes it through a Cloudflare tunnel. Built for checking output, keeping long-running sessions alive, and sending input from your phone — no SSH or router setup needed.
 
 ## Features
 
-- Quick tunnel mode with a fresh tokenized URL each run
-- Persistent URL mode on your own Cloudflare-managed domain
-- Pair-once trusted browsers for persistent sessions
-- Mobile UI with a virtual keyboard, OS keyboard toggle, and drag-to-move cursor
-- One-time mobile onboarding stored locally in `~/.termi`
-- Local `devices` and `revoke` commands for managing trusted browsers
+- **Quick tunnel** — fresh tokenized `trycloudflare.com` URL each run, no setup
+- **Persistent URL** — stable URL on your own Cloudflare domain with pair-once trusted browsers
+- **Mobile terminal UI** — virtual keyboard, OS keyboard toggle, drag-to-move cursor
+- **Manage trusted browsers** — `termi devices` and `termi revoke`
 
 ## Requirements
 
 - Node.js 20+
-- `npm`
-- `git`
 - macOS or Linux
-- `cloudflared`
 
-If `cloudflared` is not installed, Termi can download it during setup.
-
-Persistent URL mode also requires:
-
-- a Cloudflare account
-- a domain managed in Cloudflare DNS
+Termi will download `cloudflared` automatically if it isn't installed. Persistent URL mode also requires a Cloudflare account with a domain managed in Cloudflare DNS.
 
 ## Install
-
-Quick install:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/denniszhao/termi/main/install.sh | bash
 ```
 
-The install script:
-
-- checks for Node.js 20+, `npm`, and `git`
-- clones or updates the repo in `~/.termi`
-- runs `npm ci` and `npm run build`
-- symlinks `termi` to `~/.local/bin/termi`
-
-If `~/.local/bin` is not on your `PATH`, add:
+This clones the repo to `~/.termi`, builds it, and symlinks `termi` to `~/.local/bin/termi`. If `~/.local/bin` is not on your `PATH`, add:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
@@ -66,61 +47,27 @@ ln -sf "$HOME/.termi/dist/cli.mjs" "$HOME/.local/bin/termi"
 
 ## Usage
 
-Start a session:
-
 ```bash
-termi
-```
-
-Other commands:
-
-```bash
-termi start
-termi devices
-termi revoke
-termi reset
+termi              # start a session (interactive wizard)
+termi devices      # list trusted browsers
+termi revoke       # revoke trusted browsers
+termi reset        # clear local tunnel config and credentials
 termi --help
-termi --version
 ```
 
 ## Modes
 
-Quick tunnel:
+**Quick tunnel** — A random `trycloudflare.com` URL is generated each run. Access is restricted by a one-time token embedded in the URL. No browser trust state is persisted.
 
-- Random (free!) `trycloudflare.com` URL each run
-- Protected by a per-session URL token
-- No persistent browser trust state
-
-Persistent URL:
-
-- Stable URL on your Cloudflare-managed domain
-- First untrusted browser shows a pairing page
-- Trusted browsers reconnect without pairing again
-
-## Session Flow
-
-1. Termi checks for `cloudflared` and offers to download it if needed.
-2. You choose a quick tunnel or persistent URL.
-3. Termi starts a PTY using your current shell.
-4. A local HTTP/WebSocket server is started and exposed through Cloudflare.
-5. Termi prints a URL and QR code.
-6. On persistent sessions, new browsers pair once and then become trusted.
-7. You use the terminal from your phone.
-
-## Mobile UI
-
-- Virtual keyboard with common terminal commands plus OS keyboard toggle on mobile
-- Drag on the terminal to move the text cursor
-- Connection status indicator
+**Persistent URL** — A stable URL on your Cloudflare domain. New browsers go through a local approval flow (a 6-character code is verified on both sides), then become trusted. Trusted browsers reconnect without pairing again.
 
 ## Security
 
+- All traffic is routed through Cloudflare's HTTPS tunnel — the local server only listens on `127.0.0.1`.
 - Quick tunnel sessions require a random per-session token on both HTTP and WebSocket requests.
-- Persistent sessions require a trusted-device cookie after pairing.
-- Trusted-device cookies are `HttpOnly`, `Secure`, and `SameSite=Strict`.
-- Token and trusted-device comparisons use constant-time checks.
-- The local server listens on `127.0.0.1` only.
-- Termi is a convenience tool for personal remote access, not a hardened multi-user remote access system.
+- Persistent sessions use trusted-device cookies (`HttpOnly`, `Secure`, `SameSite=Strict`) issued after local approval.
+- Token and cookie comparisons use constant-time checks.
+- Termi is a convenience tool for personal remote access, not a hardened multi-user system.
 
 ## Resetting State
 
@@ -128,23 +75,18 @@ Persistent URL:
 termi reset
 ```
 
-This clears local persistent tunnel state, saved credentials, trusted devices, and onboarding state. It does not delete remote Cloudflare tunnels or DNS records.
+Clears local tunnel config, saved credentials, trusted devices, and onboarding state. Does not delete remote Cloudflare tunnels or DNS records.
 
 ## Development
 
 ```bash
-npm ci
-npm run build
-npm run dev
-npm run check
-npm test
-npm run test:server
-```
-
-Run the built CLI locally:
-
-```bash
-npm start
+npm ci              # install dependencies
+npm run build       # compile TypeScript
+npm run dev         # rebuild on file changes
+npm start           # run the built CLI
+npm test            # run unit tests
+npm run test:server # run integration tests (starts a real server)
+npm run check       # build + verify CLI loads
 ```
 
 ## License
