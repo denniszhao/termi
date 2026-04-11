@@ -78,12 +78,13 @@ function createServerAuth(
   }
 
   return {
-    mode: "token",
-    token: config.token!,
+    mode: "quick-pairing",
     mobileOnboardingSeen,
+    onPendingApprovalRequest,
     onMobileOnboardingSeen: () => {
       markMobileOnboardingSeen();
     },
+    onTrustedSessionReady,
   };
 }
 
@@ -219,13 +220,11 @@ export async function startCommand(): Promise<void> {
     }
     process.exit(1);
   }
-  const url = config.mode === "persistent"
-    ? tunnel.url
-    : `${tunnel.url}/?t=${config.token}`;
+  const url = tunnel.url;
 
   printBanner(version);
   printSessionInfo(url, config.mode === "persistent" ? "persistent" : "tunnel");
-  if (serverAuth.mode === "trusted-browser") {
+  if (serverAuth.mode !== "quick-pairing") {
     printPersistentAccessInfo(serverAuth.trustedDevices.length > 0);
     printWaitingForTrustedBrowser();
     localTerminalMayAttach = true;

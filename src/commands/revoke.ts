@@ -1,4 +1,4 @@
-import { confirm, select } from "@clack/prompts";
+import { cancel, confirm, select } from "@clack/prompts";
 import { clearTrustedDevices, listTrustedDevices, removeTrustedDevice } from "../config.js";
 import { handleCancel } from "../prompt-utils.js";
 import { compareTrustedDevices, formatTrustedDevice } from "../trusted-device-display.js";

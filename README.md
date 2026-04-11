@@ -10,7 +10,7 @@ Termi is a self-hosted Node.js CLI that runs a PTY on your machine, serves a lig
 
 ## Features
 
-- **Quick tunnel** — fresh tokenized `trycloudflare.com` URL each run, no setup
+- **Quick tunnel** — random `trycloudflare.com` URL each run with ephemeral browser pairing
 - **Persistent URL** — stable URL on your own Cloudflare domain with pair-once trusted browsers
 - **Mobile terminal UI** — virtual keyboard, OS keyboard toggle, drag-to-move cursor
 - **Manage trusted browsers** — `termi devices` and `termi revoke`
@@ -57,16 +57,16 @@ termi --help
 
 ## Modes
 
-**Quick tunnel** — A random `trycloudflare.com` URL is generated each run. Access is restricted by a one-time token embedded in the URL. No browser trust state is persisted.
+**Quick tunnel** — A random `trycloudflare.com` URL is generated each run. Browsers pair explicitly through local approval, receive an ephemeral cookie, and are not remembered after the session ends.
 
 **Persistent URL** — A stable URL on your Cloudflare domain. New browsers go through a local approval flow (a 6-character code is verified on both sides), then become trusted. Trusted browsers reconnect without pairing again.
 
 ## Security
 
 - All traffic is routed through Cloudflare's HTTPS tunnel — the local server only listens on `127.0.0.1`.
-- Quick tunnel sessions require a random per-session token on both HTTP and WebSocket requests.
-- Persistent sessions use trusted-device cookies (`HttpOnly`, `Secure`, `SameSite=Strict`) issued after local approval.
-- Token and cookie comparisons use constant-time checks.
+- Quick tunnel sessions use explicit local approval plus an ephemeral `HttpOnly`, `Secure`, `SameSite=Strict` session cookie.
+- Persistent sessions use remembered trusted-device cookies with the same cookie protections after local approval.
+- Only one remote browser is active at a time; replacement and takeover are explicit.
 - Termi is a convenience tool for personal remote access, not a hardened multi-user system.
 
 ## Resetting State

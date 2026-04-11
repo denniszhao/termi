@@ -11,10 +11,7 @@ import { attachTrackpad } from "./trackpad.js";
 
 const isMobile = "ontouchstart" in window;
 const proto = location.protocol === "https:" ? "wss:" : "ws:";
-const token = new URLSearchParams(location.search).get("t") ?? "";
-const wsUrl = token
-  ? `${proto}//${location.host}/?t=${token}`
-  : `${proto}//${location.host}/`;
+const wsUrl = `${proto}//${location.host}/`;
 const bootstrap = getBootstrapData();
 
 const terminalEl = mustGetElement<HTMLDivElement>("terminal");

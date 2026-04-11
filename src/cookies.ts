@@ -23,13 +23,18 @@ export function parseCookies(header: string | undefined): Record<string, string>
   return cookies;
 }
 
-export function serializeCookie(name: string, value: string, maxAgeSeconds: number): string {
-  return [
+export function serializeCookie(name: string, value: string, maxAgeSeconds?: number): string {
+  const parts = [
     `${name}=${encodeURIComponent(value)}`,
     "Path=/",
-    `Max-Age=${maxAgeSeconds}`,
     "HttpOnly",
     "SameSite=Strict",
     "Secure",
-  ].join("; ");
+  ];
+
+  if (maxAgeSeconds !== undefined) {
+    parts.splice(2, 0, `Max-Age=${maxAgeSeconds}`);
+  }
+
+  return parts.join("; ");
 }

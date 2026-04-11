@@ -134,10 +134,20 @@ export function getApprovalBusyHtml(message: string): string {
   `);
 }
 
+export function getPairBrowserHtml(): string {
+  return pairingPageHtml("Pair This Browser", `
+    <h1>Pair This Browser</h1>
+    <p>Request local approval to connect this browser to the current Termi session.</p>
+    <form method="post" action="/pair/request">
+      <button type="submit">Pair This Browser</button>
+    </form>
+  `, BUTTON_CSS_GREEN);
+}
+
 export function getReplaceSessionHtml(): string {
   return pairingPageHtml("Pair This Browser Instead", `
     <h1>Session Already Active</h1>
-    <p>This terminal is currently active on another trusted browser.</p>
+    <p>This terminal is currently active on another browser.</p>
     <p>Pair this browser instead if you want it to replace the current remote session after local approval.</p>
     <form method="post" action="/pair/request">
       <button type="submit">Pair This Browser Instead</button>
@@ -149,7 +159,7 @@ export function getActiveSessionHtml(options: { activeDeviceLabel: string }): st
   return pairingPageHtml("Session In Use", `
     <h1>Session Already Active</h1>
     <p>This terminal is currently open on ${escapeHtml(options.activeDeviceLabel)}.</p>
-    <p>You can take over the live session from this trusted browser.</p>
+    <p>You can take over the live session from this browser.</p>
     <form method="post" action="/takeover">
       <button type="submit">Take Over Session</button>
     </form>

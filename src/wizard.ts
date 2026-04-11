@@ -8,7 +8,6 @@ import {
 } from "@clack/prompts";
 import chalk from "chalk";
 import { BRAND, DEFAULT_PORT } from "./constants.js";
-import { generateToken } from "./auth.js";
 import { handleCancel } from "./prompt-utils.js";
 import {
   findCloudflared,
@@ -368,7 +367,6 @@ export interface WizardResult {
   mode: "tunnel" | "persistent";
   port: number;
   shell: string;
-  token?: string;
   cloudflaredPath: string;
   savedConfig?: TermiSavedConfig;
 }
@@ -432,7 +430,6 @@ export async function runWizard(): Promise<WizardResult> {
     mode: resolvedMode,
     port: DEFAULT_PORT,
     shell: process.env.SHELL || "/bin/bash",
-    token: resolvedMode === "tunnel" ? generateToken() : undefined,
     cloudflaredPath: cfPath,
     savedConfig,
   };

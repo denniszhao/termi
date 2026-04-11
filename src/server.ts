@@ -15,11 +15,11 @@ import {
   touchTrustedDevice,
   verifyTrustedDeviceCookie,
 } from "./trusted-devices.js";
-import { validateToken } from "./auth.js";
 import {
   getActiveSessionHtml,
   getApprovalBusyHtml,
   getHtml,
+  getPairBrowserHtml,
   getPendingApprovalHtml,
   getReplaceSessionHtml,
 } from "./html.js";
@@ -32,7 +32,9 @@ const MAX_WS_MESSAGE_BYTES = 64 * 1024;
 const FLUSH_INTERVAL_MS = 16;
 const REQUEST_URL_BASE = "http://termi.local";
 const PENDING_APPROVAL_COOKIE = "__Host-termi_pending";
+const QUICK_SESSION_COOKIE = "__Host-termi_session";
 const PENDING_APPROVAL_TTL_MS = 5 * 60 * 1000;
+const TRUSTED_DEVICE_TTL_SECONDS = 30 * 24 * 60 * 60;
 const TAKEOVER_CLOSE_CODE = 4001;
 const APPROVAL_CODE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 const APPROVAL_CODE_LENGTH = 6;
@@ -77,12 +79,19 @@ type UntrustedBrowserState =
   | { kind: "approval-pending"; request: PendingApprovalRequest }
   | { kind: "approval-busy"; message: string }
   | { kind: "replace-required" }
-  | { kind: "trust-available" };
+  | { kind: "pair-available" };
 
 export type ServerAuth =
   | {
-      mode: "token";
-      token: string;
+      mode: "quick-pairing";
+      onPendingApprovalRequest(
+        request: PendingApprovalInfo,
+        actions: {
+          approve(): boolean;
+          reject(message?: string): boolean;
+        },
+      ): void;
+      onTrustedSessionReady(): void;
       mobileOnboardingSeen: boolean;
       onMobileOnboardingSeen(): void;
     }
@@ -126,11 +135,12 @@ export function startServer(
   const history: string[] = [];
   let activeClient:
     | {
-        deviceId: string | null;
+        browserId: string;
         ws: WebSocket;
       }
     | undefined;
   let pendingApproval: PendingApprovalRequest | undefined;
+  let quickPairedBrowser: TrustedDevice | null = null;
   let trustedDevices =
     auth.mode === "trusted-browser"
       ? [...auth.trustedDevices]
@@ -184,11 +194,36 @@ export function startServer(
     }
   }
 
-  function persistTrustedDevices(nextTrustedDevices: TrustedDevice[]): void {
-    trustedDevices = nextTrustedDevices;
+  function getKnownBrowsers(): TrustedDevice[] {
+    return auth.mode === "trusted-browser"
+      ? trustedDevices
+      : quickPairedBrowser ? [quickPairedBrowser] : [];
+  }
+
+  function setKnownBrowsers(nextBrowsers: TrustedDevice[]): void {
     if (auth.mode === "trusted-browser") {
+      trustedDevices = nextBrowsers;
       auth.onTrustedDevicesChange(trustedDevices);
+      return;
     }
+
+    quickPairedBrowser = nextBrowsers[0] ?? null;
+  }
+
+  function getAuthCookieName(): string {
+    return auth.mode === "trusted-browser"
+      ? TRUSTED_DEVICE_COOKIE
+      : QUICK_SESSION_COOKIE;
+  }
+
+  function getAuthCookieMaxAgeSeconds(): number | undefined {
+    return auth.mode === "trusted-browser"
+      ? TRUSTED_DEVICE_TTL_SECONDS
+      : undefined;
+  }
+
+  function persistTrustedDevices(nextTrustedDevices: TrustedDevice[]): void {
+    setKnownBrowsers(nextTrustedDevices);
   }
 
   function clearPendingApproval(): void {
@@ -214,7 +249,7 @@ export function startServer(
   }
 
   function getPendingApproval(req: http.IncomingMessage): PendingApprovalRequest | null {
-    if (auth.mode !== "trusted-browser" || !pendingApproval) {
+    if (!pendingApproval) {
       return null;
     }
 
@@ -231,20 +266,20 @@ export function startServer(
     return pendingApproval?.status === "pending" || pendingApproval?.status === "approved";
   }
 
-  function getActiveTrustedDevice(): TrustedDevice | null {
-    if (!activeClient?.deviceId) {
+  function getActiveBrowser(): TrustedDevice | null {
+    if (!activeClient) {
       return null;
     }
 
-    return trustedDevices.find((device) => device.id === activeClient?.deviceId) ?? null;
+    return getKnownBrowsers().find((device) => device.id === activeClient?.browserId) ?? null;
   }
 
-  function hasOtherActiveTrustedClient(deviceId: string): boolean {
-    return !!activeClient && activeClient.deviceId !== null && activeClient.deviceId !== deviceId;
+  function hasOtherActiveClient(browserId: string): boolean {
+    return !!activeClient && activeClient.browserId !== browserId;
   }
 
   function notifyTrustedSessionReady(): void {
-    if (auth.mode !== "trusted-browser" || trustedSessionReadyNotified) {
+    if (trustedSessionReadyNotified) {
       return;
     }
 
@@ -252,20 +287,17 @@ export function startServer(
     auth.onTrustedSessionReady();
   }
 
-  function getTrustedDevice(req: http.IncomingMessage): TrustedDevice | null {
-    if (auth.mode !== "trusted-browser") {
-      return null;
-    }
+  function getAuthenticatedBrowser(req: http.IncomingMessage): TrustedDevice | null {
     const cookies = parseCookies(req.headers.cookie);
-    return verifyTrustedDeviceCookie(cookies[TRUSTED_DEVICE_COOKIE], trustedDevices);
+    return verifyTrustedDeviceCookie(cookies[getAuthCookieName()], getKnownBrowsers());
   }
 
-  function isTrustedBrowserRequest(req: http.IncomingMessage): boolean {
-    return getTrustedDevice(req) !== null;
+  function isAuthenticatedBrowserRequest(req: http.IncomingMessage): boolean {
+    return getAuthenticatedBrowser(req) !== null;
   }
 
-  function touchTrustedBrowser(deviceId: string): void {
-    persistTrustedDevices(touchTrustedDevice(trustedDevices, deviceId));
+  function touchAuthenticatedBrowser(deviceId: string): void {
+    persistTrustedDevices(touchTrustedDevice(getKnownBrowsers(), deviceId));
   }
 
   function generateApprovalCode(): string {
@@ -308,7 +340,7 @@ export function startServer(
   }
 
   function approvePendingApprovalRequest(requestId: string): boolean {
-    if (auth.mode !== "trusted-browser" || !pendingApproval || pendingApproval.id !== requestId) {
+    if (!pendingApproval || pendingApproval.id !== requestId) {
       return false;
     }
     if (pendingApproval.status !== "pending" || pendingApproval.expiresAt <= new Date().toISOString()) {
@@ -320,7 +352,10 @@ export function startServer(
     }
 
     const { device, cookieValue } = createTrustedDevice(pendingApproval.label);
-    persistTrustedDevices(addTrustedDevice(trustedDevices, device));
+    const nextBrowsers = auth.mode === "trusted-browser"
+      ? addTrustedDevice(trustedDevices, device)
+      : [device];
+    persistTrustedDevices(nextBrowsers);
     pendingApproval = {
       ...pendingApproval,
       approvedCookieValue: cookieValue,
@@ -414,11 +449,11 @@ export function startServer(
       };
     }
 
-    if (activeClient !== undefined && activeClient.deviceId !== null) {
+    if (activeClient !== undefined) {
       return { kind: "replace-required" };
     }
 
-    return { kind: "trust-available" };
+    return { kind: "pair-available" };
   }
 
   function beginPendingApproval(
@@ -444,6 +479,14 @@ export function startServer(
       PENDING_APPROVAL_COOKIE,
       request.id,
       Math.floor(PENDING_APPROVAL_TTL_MS / 1000),
+    );
+  }
+
+  function getApprovedCookieHeader(cookieValue: string): string {
+    return serializeCookie(
+      getAuthCookieName(),
+      cookieValue,
+      getAuthCookieMaxAgeSeconds(),
     );
   }
 
@@ -499,67 +542,61 @@ export function startServer(
     }
 
     if (url.pathname === "/") {
-      if (auth.mode === "token") {
-        const reqToken = url.searchParams.get("t");
-        if (!validateToken(reqToken, auth.token)) {
-          res.writeHead(401, { "Content-Type": "text/plain" });
-          res.end("Unauthorized");
+      const browser = getAuthenticatedBrowser(req);
+      if (!browser) {
+        const state = getUntrustedBrowserState(req);
+
+        if (sendApprovalBlockedResponse(res, state)) {
           return;
         }
-      } else {
-        const trustedDevice = getTrustedDevice(req);
-        if (!trustedDevice) {
-          const state = getUntrustedBrowserState(req);
-          const resolvedState = state.kind === "trust-available"
-            ? beginPendingApproval(req, "trust")
-            : state;
 
-          if (sendApprovalBlockedResponse(res, resolvedState)) {
-            return;
-          }
-
-          if (resolvedState.kind === "replace-required") {
-            res.writeHead(200, {
-              "Content-Type": "text/html; charset=utf-8",
-              "Cache-Control": "no-store",
-            });
-            res.end(getReplaceSessionHtml());
-            return;
-          }
-
+        if (state.kind === "replace-required") {
           res.writeHead(200, {
             "Content-Type": "text/html; charset=utf-8",
             "Cache-Control": "no-store",
-            "Set-Cookie": getPendingApprovalCookieHeader(resolvedState.request),
+          });
+          res.end(getReplaceSessionHtml());
+          return;
+        }
+
+        if (state.kind === "approval-pending") {
+          res.writeHead(200, {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+            "Set-Cookie": getPendingApprovalCookieHeader(state.request),
           });
           res.end(getPendingApprovalHtml({
-            code: resolvedState.request.code,
-            expiresAt: resolvedState.request.expiresAt,
-            label: resolvedState.request.label,
+            code: state.request.code,
+            expiresAt: state.request.expiresAt,
+            label: state.request.label,
           }));
           return;
         }
 
-        if (hasOtherActiveTrustedClient(trustedDevice.id)) {
-          res.writeHead(200, {
-            "Content-Type": "text/html; charset=utf-8",
-            "Cache-Control": "no-store",
-          });
-          res.end(getActiveSessionHtml({
-            activeDeviceLabel: getActiveTrustedDevice()?.label ?? "another trusted browser",
-          }));
-          return;
-        }
-
-        notifyTrustedSessionReady();
-        touchTrustedBrowser(trustedDevice.id);
+        res.writeHead(200, {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+        });
+        res.end(getPairBrowserHtml());
+        return;
       }
 
-      const onboardingSeenPath = auth.mode === "token"
-        ? `/onboarding/seen?t=${encodeURIComponent(auth.token)}`
-        : "/onboarding/seen";
+      if (hasOtherActiveClient(browser.id)) {
+        res.writeHead(200, {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+        });
+        res.end(getActiveSessionHtml({
+          activeDeviceLabel: getActiveBrowser()?.label ?? "another browser",
+        }));
+        return;
+      }
+
+      notifyTrustedSessionReady();
+      touchAuthenticatedBrowser(browser.id);
+
       const html = getHtml({
-        onboardingSeenPath,
+        onboardingSeenPath: "/onboarding/seen",
         showOnboarding: isLikelyMobileRequest(req) && !mobileOnboardingSeen,
       });
 
@@ -573,12 +610,6 @@ export function startServer(
     }
 
     if (url.pathname === "/pair/status" && req.method === "GET") {
-      if (auth.mode !== "trusted-browser") {
-        res.writeHead(404);
-        res.end("Not found");
-        return;
-      }
-
       const request = getPendingApproval(req);
       if (!request) {
         res.writeHead(200, {
@@ -604,7 +635,7 @@ export function startServer(
           "Content-Type": "application/json; charset=utf-8",
           "Cache-Control": "no-store",
           "Set-Cookie": [
-            serializeCookie(TRUSTED_DEVICE_COOKIE, request.approvedCookieValue, 30 * 24 * 60 * 60),
+            getApprovedCookieHeader(request.approvedCookieValue),
             serializeCookie(PENDING_APPROVAL_COOKIE, "", 0),
           ],
         });
@@ -637,19 +668,13 @@ export function startServer(
     }
 
     if (url.pathname === "/pair/request" && req.method === "POST") {
-      if (auth.mode !== "trusted-browser") {
-        res.writeHead(404);
-        res.end("Not found");
-        return;
-      }
-
       if (!isSameOriginOrMissing(req)) {
         res.writeHead(403, { "Content-Type": "text/plain" });
         res.end("Forbidden");
         return;
       }
 
-      if (getTrustedDevice(req)) {
+      if (getAuthenticatedBrowser(req)) {
         res.writeHead(303, {
           Location: "/",
           "Cache-Control": "no-store",
@@ -659,10 +684,10 @@ export function startServer(
       }
 
       const state = getUntrustedBrowserState(req);
-      const intent = activeClient !== undefined && activeClient.deviceId !== null
+      const intent = activeClient !== undefined
         ? "replace-active-session"
         : "trust";
-      const resolvedState = state.kind === "trust-available" || state.kind === "replace-required"
+      const resolvedState = state.kind === "pair-available" || state.kind === "replace-required"
         ? beginPendingApproval(req, intent)
         : state;
 
@@ -695,14 +720,7 @@ export function startServer(
         return;
       }
 
-      if (auth.mode === "token") {
-        const reqToken = url.searchParams.get("t");
-        if (!validateToken(reqToken, auth.token)) {
-          res.writeHead(401, { "Content-Type": "text/plain" });
-          res.end("Unauthorized");
-          return;
-        }
-      } else if (!isTrustedBrowserRequest(req)) {
+      if (!isAuthenticatedBrowserRequest(req)) {
         res.writeHead(401, { "Content-Type": "text/plain" });
         res.end("Unauthorized");
         return;
@@ -716,29 +734,23 @@ export function startServer(
     }
 
     if (url.pathname === "/takeover" && req.method === "POST") {
-      if (auth.mode !== "trusted-browser") {
-        res.writeHead(404);
-        res.end("Not found");
-        return;
-      }
-
       if (!isSameOrigin(req)) {
         res.writeHead(403, { "Content-Type": "text/plain" });
         res.end("Forbidden");
         return;
       }
 
-      const trustedDevice = getTrustedDevice(req);
-      if (!trustedDevice) {
+      const browser = getAuthenticatedBrowser(req);
+      if (!browser) {
         res.writeHead(401, { "Content-Type": "text/plain" });
         res.end("Unauthorized");
         return;
       }
 
-      if (hasOtherActiveTrustedClient(trustedDevice.id)) {
+      if (hasOtherActiveClient(browser.id)) {
         const previousActiveClient = activeClient;
         activeClient = undefined;
-        previousActiveClient?.ws.close(TAKEOVER_CLOSE_CODE, "Session taken over by another trusted browser");
+        previousActiveClient?.ws.close(TAKEOVER_CLOSE_CODE, "Session taken over by another browser");
       }
 
       res.writeHead(303, {
@@ -763,30 +775,20 @@ export function startServer(
       return;
     }
 
-    if (auth.mode === "token") {
-      const reqToken = url.searchParams.get("t");
-
-      if (!validateToken(reqToken, auth.token)) {
-        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-        socket.destroy();
-        return;
-      }
-    } else {
-      const trustedDevice = getTrustedDevice(req);
-      if (!isSameOrigin(req) || !trustedDevice) {
-        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-        socket.destroy();
-        return;
-      }
-
-      if (hasOtherActiveTrustedClient(trustedDevice.id)) {
-        socket.write("HTTP/1.1 409 Conflict\r\n\r\n");
-        socket.destroy();
-        return;
-      }
-
-      notifyTrustedSessionReady();
+    const browser = getAuthenticatedBrowser(req);
+    if (!isSameOrigin(req) || !browser) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+      return;
     }
+
+    if (hasOtherActiveClient(browser.id)) {
+      socket.write("HTTP/1.1 409 Conflict\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
+    notifyTrustedSessionReady();
 
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit("connection", ws, req);
@@ -794,20 +796,19 @@ export function startServer(
   });
 
   wss.on("connection", (ws, req) => {
-    const trustedDevice = auth.mode === "trusted-browser"
-      ? getTrustedDevice(req)
-      : null;
-    const trustedDeviceId = trustedDevice?.id ?? null;
-
-    if (auth.mode === "trusted-browser") {
-      if (activeClient?.ws && activeClient.deviceId === trustedDeviceId && activeClient.ws !== ws) {
-        activeClient.ws.close(TAKEOVER_CLOSE_CODE, "Session reopened on the same trusted browser");
-      }
-      activeClient = {
-        deviceId: trustedDeviceId,
-        ws,
-      };
+    const browser = getAuthenticatedBrowser(req);
+    if (!browser) {
+      ws.close(4000, "Unauthorized");
+      return;
     }
+
+    if (activeClient?.ws && activeClient.browserId === browser.id && activeClient.ws !== ws) {
+      activeClient.ws.close(TAKEOVER_CLOSE_CODE, "Session reopened on the same browser");
+    }
+    activeClient = {
+      browserId: browser.id,
+      ws,
+    };
 
     const initialOutput = history.join("");
     if (initialOutput) {

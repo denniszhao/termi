@@ -42,7 +42,7 @@
         "dev": "node build.mjs --watch",
         "start": "node dist/cli.mjs start",
         "check": "npm run build && node dist/cli.mjs --help && node dist/cli.mjs --version",
-        "test": "npm run build && node --import tsx --test test/auth.test.ts test/cloudflare.test.ts test/config.test.ts test/cookies.test.ts test/input-guard.test.ts test/session.test.ts test/socket.test.ts test/trusted-devices.test.ts test/tunnel.test.ts",
+        "test": "npm run build && node --import tsx --test test/cloudflare.test.ts test/config.test.ts test/cookies.test.ts test/input-guard.test.ts test/session.test.ts test/socket.test.ts test/trusted-devices.test.ts test/tunnel.test.ts",
         "test:server": "npm run build && TERMI_RUN_SERVER_TESTS=1 node --import tsx --test test/server.test.ts"
     },
     "dependencies": {

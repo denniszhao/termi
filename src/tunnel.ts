@@ -170,14 +170,11 @@ export function startTunnel(
       if (url) {
         resolved = true;
         clearTimeout(timeout);
-        waitForTunnelReady(url).then((ready) => {
-          if (ready) {
-            resolve(createTunnelHandle(proc, url));
-          } else {
-            proc.kill("SIGTERM");
-            reject(new Error("Tunnel URL was allocated but health check never succeeded"));
-          }
-        });
+
+        // Cloudflare can announce the quick tunnel URL before the public
+        // health probe starts succeeding. Once the URL is allocated, let the
+        // session continue instead of failing setup on that transient check.
+        resolve(createTunnelHandle(proc, url));
       }
     }
 
