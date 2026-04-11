@@ -134,16 +134,6 @@ export function getApprovalBusyHtml(message: string): string {
   `);
 }
 
-export function getPairBrowserHtml(): string {
-  return pairingPageHtml("Pair This Browser", `
-    <h1>Pair This Browser</h1>
-    <p>Request local approval to connect this browser to the current Termi session.</p>
-    <form method="post" action="/pair/request">
-      <button type="submit">Pair This Browser</button>
-    </form>
-  `, BUTTON_CSS_GREEN);
-}
-
 export function getReplaceSessionHtml(): string {
   return pairingPageHtml("Pair This Browser Instead", `
     <h1>Session Already Active</h1>
@@ -172,6 +162,7 @@ const BUTTON_CSS_GREEN = `
       border: 0;
       border-radius: 12px;
       padding: 14px 16px;
+      cursor: pointer;
       font: inherit;
       font-weight: 700;
       background: #10b981;
@@ -184,6 +175,7 @@ const BUTTON_CSS_AMBER = `
       border: 0;
       border-radius: 12px;
       padding: 14px 16px;
+      cursor: pointer;
       font: inherit;
       font-weight: 700;
       background: #f59e0b;

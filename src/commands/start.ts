@@ -1,7 +1,11 @@
 import { outro, spinner } from "@clack/prompts";
 import { runWizard } from "../wizard.js";
 import { spawnPty } from "../pty-manager.js";
-import { startServer, type PendingApprovalInfo, type ServerAuth } from "../server.js";
+import {
+  startServer,
+  type PendingApprovalInfo,
+  type ServerAuth,
+} from "../server.js";
 import { startTunnel, startNamedTunnel, TunnelHandle } from "../tunnel.js";
 import {
   printBanner,
@@ -9,6 +13,7 @@ import {
   printPendingApprovalResult,
   printPersistentAccessInfo,
   printSessionInfo,
+  printTrustedBrowserTakeover,
   printTrustedBrowserConnected,
   printWaitingForTrustedBrowser,
 } from "../display.js";
@@ -54,6 +59,7 @@ function createServerAuth(
     request: PendingApprovalInfo,
     actions: { approve(): boolean; reject(message?: string): boolean },
   ) => void,
+  onTrustedBrowserTakeover: (label: string) => void,
 ): ServerAuth {
   const mobileOnboardingSeen = getMobileOnboardingSeen();
 
@@ -70,6 +76,7 @@ function createServerAuth(
         saveConfig(config.savedConfig);
       },
       onPendingApprovalRequest,
+      onTrustedBrowserTakeover,
       onMobileOnboardingSeen: () => {
         markMobileOnboardingSeen();
       },
@@ -81,6 +88,7 @@ function createServerAuth(
     mode: "quick-pairing",
     mobileOnboardingSeen,
     onPendingApprovalRequest,
+    onTrustedBrowserTakeover,
     onMobileOnboardingSeen: () => {
       markMobileOnboardingSeen();
     },
@@ -160,6 +168,7 @@ export async function startCommand(): Promise<void> {
             ? "Browser approved. It can now finish pairing."
             : "Browser approval rejected."
           : "That approval request is no longer pending.",
+        handled && approved,
       );
     } finally {
       if (shouldPauseLocalInput) {
@@ -182,15 +191,28 @@ export async function startCommand(): Promise<void> {
     }
   }
 
-  function renderApprovalResult(message: string): void {
+  function renderApprovalResult(message: string, success = false): void {
     if (localTerminalOutputAttached) {
       process.stdout.write("\r\n");
     }
 
-    printPendingApprovalResult(message);
+    printPendingApprovalResult(message, success);
 
     if (localTerminalOutputAttached) {
       process.stdout.write("\r\n");
+    }
+  }
+
+  function renderTrustedBrowserTakeover(label: string): void {
+    if (localTerminalOutputAttached) {
+      process.stdout.write("\r\n\r\n");
+      process.stdout.write("  ───────────────────────────────\r\n");
+    }
+
+    printTrustedBrowserTakeover(label);
+
+    if (localTerminalOutputAttached) {
+      process.stdout.write("  ───────────────────────────────\r\n\r\n");
     }
   }
 
@@ -199,6 +221,9 @@ export async function startCommand(): Promise<void> {
     markTrustedSessionReady,
     (request, actions) => {
       void handlePendingApprovalRequest(request, actions);
+    },
+    (label) => {
+      renderTrustedBrowserTakeover(label);
     },
   );
   const server = await startServer(pty, serverAuth, config.port);

@@ -19,7 +19,6 @@ import {
   getActiveSessionHtml,
   getApprovalBusyHtml,
   getHtml,
-  getPairBrowserHtml,
   getPendingApprovalHtml,
   getReplaceSessionHtml,
 } from "./html.js";
@@ -91,6 +90,7 @@ export type ServerAuth =
           reject(message?: string): boolean;
         },
       ): void;
+      onTrustedBrowserTakeover(label: string): void;
       onTrustedSessionReady(): void;
       mobileOnboardingSeen: boolean;
       onMobileOnboardingSeen(): void;
@@ -106,6 +106,7 @@ export type ServerAuth =
           reject(message?: string): boolean;
         },
       ): void;
+      onTrustedBrowserTakeover(label: string): void;
       onTrustedSessionReady(): void;
       mobileOnboardingSeen: boolean;
       onMobileOnboardingSeen(): void;
@@ -545,12 +546,15 @@ export function startServer(
       const browser = getAuthenticatedBrowser(req);
       if (!browser) {
         const state = getUntrustedBrowserState(req);
+        const resolvedState = state.kind === "pair-available"
+          ? beginPendingApproval(req, "trust")
+          : state;
 
-        if (sendApprovalBlockedResponse(res, state)) {
+        if (sendApprovalBlockedResponse(res, resolvedState)) {
           return;
         }
 
-        if (state.kind === "replace-required") {
+        if (resolvedState.kind === "replace-required") {
           res.writeHead(200, {
             "Content-Type": "text/html; charset=utf-8",
             "Cache-Control": "no-store",
@@ -559,26 +563,19 @@ export function startServer(
           return;
         }
 
-        if (state.kind === "approval-pending") {
+        if (resolvedState.kind === "approval-pending") {
           res.writeHead(200, {
             "Content-Type": "text/html; charset=utf-8",
             "Cache-Control": "no-store",
-            "Set-Cookie": getPendingApprovalCookieHeader(state.request),
+            "Set-Cookie": getPendingApprovalCookieHeader(resolvedState.request),
           });
           res.end(getPendingApprovalHtml({
-            code: state.request.code,
-            expiresAt: state.request.expiresAt,
-            label: state.request.label,
+            code: resolvedState.request.code,
+            expiresAt: resolvedState.request.expiresAt,
+            label: resolvedState.request.label,
           }));
           return;
         }
-
-        res.writeHead(200, {
-          "Content-Type": "text/html; charset=utf-8",
-          "Cache-Control": "no-store",
-        });
-        res.end(getPairBrowserHtml());
-        return;
       }
 
       if (hasOtherActiveClient(browser.id)) {
@@ -750,6 +747,7 @@ export function startServer(
       if (hasOtherActiveClient(browser.id)) {
         const previousActiveClient = activeClient;
         activeClient = undefined;
+        auth.onTrustedBrowserTakeover(browser.label ?? "Unknown browser");
         previousActiveClient?.ws.close(TAKEOVER_CLOSE_CODE, "Session taken over by another browser");
       }
 

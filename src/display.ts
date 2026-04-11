@@ -9,10 +9,12 @@ export function printBanner(version: string): void {
 }
 
 export function printSessionInfo(url: string, mode: string): void {
+  const isPersistent = mode === "persistent";
+
   console.log("");
   console.log(
     chalk.green("  Ready!") +
-      chalk.dim(` (${mode === "persistent" ? "persistent URL" : "quick tunnel"})`),
+      chalk.dim(` (${isPersistent ? "persistent URL" : "quick tunnel"})`),
   );
   console.log("");
 
@@ -24,6 +26,10 @@ export function printSessionInfo(url: string, mode: string): void {
     console.log(`  ${chalk.cyan(url)}`);
     console.log("");
     console.log(chalk.dim("  Scan the QR code or open the URL on your phone."));
+    if (!isPersistent) {
+      console.log(chalk.dim("  Cloudflare may need a short time to make the quick-tunnel URL reachable."));
+      console.log(chalk.dim("  If the page does not load right away, wait a bit and try again."));
+    }
     console.log(chalk.dim("  Type 'exit' or press Ctrl+D to stop."));
     console.log("");
   });
@@ -63,10 +69,18 @@ export function printPendingApprovalRequest(
   } else {
     console.log(chalk.dim("  Check that the same code is shown on the new browser before approving it."));
   }
-  console.log("");
 }
 
-export function printPendingApprovalResult(message: string): void {
+export function printPendingApprovalResult(message: string, success = false): void {
+  if (success) {
+    console.log(`  ${chalk.green("✔")} ${chalk.green(message)}`);
+    return;
+  }
+
   console.log(`  ${chalk.dim(message)}`);
-  console.log("");
+}
+
+export function printTrustedBrowserTakeover(label: string): void {
+  console.log(`  ${chalk.yellow("Taking over browser:")} ${chalk.bold(label)}`);
+  console.log(chalk.dim("  Trusted browser took over the current remote session."));
 }

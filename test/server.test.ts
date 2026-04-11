@@ -66,12 +66,21 @@ function extractCookie(setCookieHeader: string | null, cookieName: string): stri
   return match[1]!;
 }
 
-test("server serves health and shows the quick pairing page by default", { skip: !runServerTests }, async () => {
+test("server serves health and auto-starts quick pairing by default", { skip: !runServerTests }, async () => {
   const pty = new FakePty();
+  let pendingApprovalActions:
+    | {
+        approve(): boolean;
+        reject(message?: string): boolean;
+      }
+    | undefined;
   let mobileOnboardingSeen = false;
   const server = await startServer(pty, {
     mode: "quick-pairing",
-    onPendingApprovalRequest: () => {},
+    onPendingApprovalRequest: (_request, actions) => {
+      pendingApprovalActions = actions;
+    },
+    onTrustedBrowserTakeover: () => {},
     onTrustedSessionReady: () => {},
     mobileOnboardingSeen,
     onMobileOnboardingSeen: () => {
@@ -86,7 +95,8 @@ test("server serves health and shows the quick pairing page by default", { skip:
 
     const pairPage = await fetch(`http://127.0.0.1:${server.port}/`);
     assert.equal(pairPage.status, 200);
-    assert.match(await pairPage.text(), /Pair This Browser/);
+    assert.match(await pairPage.text(), /Approve This Browser/);
+    assert.ok(pendingApprovalActions);
   } finally {
     server.close();
   }
@@ -108,6 +118,7 @@ test("quick mode approves a pending browser locally and then allows websocket ac
       onPendingApprovalRequest: (_request, actions) => {
         pendingApprovalActions = actions;
       },
+      onTrustedBrowserTakeover: () => {},
       onTrustedSessionReady: () => {
         trustedSessionReadyCount += 1;
       },
@@ -120,31 +131,13 @@ test("quick mode approves a pending browser locally and then allows websocket ac
   try {
     const pairPage = await fetch(`http://127.0.0.1:${server.port}/`);
     assert.equal(pairPage.status, 200);
-    assert.match(await pairPage.text(), /Pair This Browser/);
-    assert.equal(pendingApprovalActions, undefined);
-
-    const pairRequest = await fetch(`http://127.0.0.1:${server.port}/pair/request`, {
-      method: "POST",
-      headers: {
-        Origin: `http://127.0.0.1:${server.port}`,
-      },
-      redirect: "manual",
-    });
-    assert.equal(pairRequest.status, 303);
+    assert.match(await pairPage.text(), /Approve This Browser/);
     assert.ok(pendingApprovalActions);
 
     const pendingCookie = extractCookie(
-      pairRequest.headers.get("set-cookie"),
+      pairPage.headers.get("set-cookie"),
       "__Host-termi_pending",
     );
-
-    const pendingPage = await fetch(`http://127.0.0.1:${server.port}/`, {
-      headers: {
-        Cookie: pendingCookie,
-      },
-    });
-    assert.equal(pendingPage.status, 200);
-    assert.match(await pendingPage.text(), /Approve This Browser/);
 
     assert.equal(pendingApprovalActions.approve(), true);
     const statusResponse = await fetch(`http://127.0.0.1:${server.port}/pair/status`, {
@@ -219,6 +212,7 @@ test("persistent mode approves a pending browser locally and then allows websock
       onPendingApprovalRequest: (_request, actions) => {
         pendingApprovalActions = actions;
       },
+      onTrustedBrowserTakeover: () => {},
       onTrustedSessionReady: () => {
         trustedSessionReadyCount += 1;
       },
@@ -231,21 +225,11 @@ test("persistent mode approves a pending browser locally and then allows websock
   try {
     const pairPage = await fetch(`http://127.0.0.1:${server.port}/`);
     assert.equal(pairPage.status, 200);
-    assert.match(await pairPage.text(), /Pair This Browser/);
-    assert.equal(pendingApprovalActions, undefined);
-
-    const pairRequest = await fetch(`http://127.0.0.1:${server.port}/pair/request`, {
-      method: "POST",
-      headers: {
-        Origin: `http://127.0.0.1:${server.port}`,
-      },
-      redirect: "manual",
-    });
-    assert.equal(pairRequest.status, 303);
+    assert.match(await pairPage.text(), /Approve This Browser/);
     assert.ok(pendingApprovalActions);
 
     const pendingCookie = extractCookie(
-      pairRequest.headers.get("set-cookie"),
+      pairPage.headers.get("set-cookie"),
       "__Host-termi_pending",
     );
 
@@ -290,6 +274,7 @@ test("server returns 400 for malformed request hosts without crashing", { skip: 
   const server = await startServer(pty, {
     mode: "quick-pairing",
     onPendingApprovalRequest: () => {},
+    onTrustedBrowserTakeover: () => {},
     onTrustedSessionReady: () => {},
     mobileOnboardingSeen: false,
     onMobileOnboardingSeen: () => {},
@@ -318,6 +303,7 @@ test("persistent mode ignores malformed trusted-device cookies", { skip: !runSer
       trustedDevices: [],
       onTrustedDevicesChange: () => {},
       onPendingApprovalRequest: () => {},
+      onTrustedBrowserTakeover: () => {},
       onTrustedSessionReady: () => {},
       mobileOnboardingSeen: false,
       onMobileOnboardingSeen: () => {},
@@ -333,7 +319,7 @@ test("persistent mode ignores malformed trusted-device cookies", { skip: !runSer
     });
 
     assert.equal(response.status, 200);
-    assert.match(await response.text(), /Pair This Browser/);
+    assert.match(await response.text(), /Approve This Browser/);
   } finally {
     server.close();
   }
@@ -350,6 +336,7 @@ test("server does not render a verification code when approval is rejected immed
       onPendingApprovalRequest: (_request, actions) => {
         actions.reject("Local approval is unavailable right now.");
       },
+      onTrustedBrowserTakeover: () => {},
       onTrustedSessionReady: () => {},
       mobileOnboardingSeen: false,
       onMobileOnboardingSeen: () => {},
@@ -390,6 +377,7 @@ test("quick mode requires explicit replacement before a second browser can pair 
       onPendingApprovalRequest: (_request, actions) => {
         pendingApprovalActions = actions;
       },
+      onTrustedBrowserTakeover: () => {},
       onTrustedSessionReady: () => {},
       mobileOnboardingSeen: false,
       onMobileOnboardingSeen: () => {},
@@ -479,7 +467,7 @@ test("quick mode requires explicit replacement before a second browser can pair 
       },
     });
     assert.equal(oldCookiePage.status, 200);
-    assert.match(await oldCookiePage.text(), /Pair This Browser/);
+    assert.match(await oldCookiePage.text(), /Approve This Browser/);
   } finally {
     server.close();
   }
@@ -503,6 +491,7 @@ test("untrusted browsers must explicitly request replacement before pairing over
       onPendingApprovalRequest: (_request, actions) => {
         pendingApprovalActions = actions;
       },
+      onTrustedBrowserTakeover: () => {},
       onTrustedSessionReady: () => {},
       mobileOnboardingSeen: false,
       onMobileOnboardingSeen: () => {},
@@ -583,6 +572,7 @@ test("trusted browsers require an explicit takeover when another trusted browser
   const pty = new FakePty();
   const first = createTrustedDevice("First phone");
   const second = createTrustedDevice("Second phone");
+  const takeoverLabels: string[] = [];
   const server = await startServer(
     pty,
     {
@@ -590,6 +580,9 @@ test("trusted browsers require an explicit takeover when another trusted browser
       trustedDevices: [first.device, second.device],
       onTrustedDevicesChange: () => {},
       onPendingApprovalRequest: () => {},
+      onTrustedBrowserTakeover: (label) => {
+        takeoverLabels.push(label);
+      },
       onTrustedSessionReady: () => {},
       mobileOnboardingSeen: false,
       onMobileOnboardingSeen: () => {},
@@ -635,6 +628,7 @@ test("trusted browsers require an explicit takeover when another trusted browser
 
     const [closeCode] = await closePromise;
     assert.equal(closeCode, 4001);
+    assert.deepEqual(takeoverLabels, ["Second phone"]);
 
     const secondPage = await fetch(`http://127.0.0.1:${server.port}/`, {
       headers: {
@@ -661,6 +655,7 @@ test("server rejects oversized websocket messages and ignores invalid resize pay
     onPendingApprovalRequest: (_request, actions) => {
       pendingApprovalActions = actions;
     },
+    onTrustedBrowserTakeover: () => {},
     onTrustedSessionReady: () => {},
     mobileOnboardingSeen: false,
     onMobileOnboardingSeen: () => {},
@@ -725,6 +720,7 @@ test("server only shows onboarding for mobile until it is acknowledged", { skip:
     onPendingApprovalRequest: (_request, actions) => {
       pendingApprovalActions = actions;
     },
+    onTrustedBrowserTakeover: () => {},
     onTrustedSessionReady: () => {},
     mobileOnboardingSeen,
     onMobileOnboardingSeen: () => {
