@@ -25,13 +25,17 @@ export function getHtml(options: HtmlOptions): string {
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <div id="terminal-brand">
-    <span id="terminal-brand-logo">🍉</span><span id="terminal-brand-wordmark">termi</span><span id="status"><span id="status-dot"></span><span id="status-text">Connecting</span></span>
+  <div id="app-shell">
+    <div id="terminal-brand">
+      <span id="terminal-brand-logo">🍉</span><span id="terminal-brand-wordmark">termi</span><span id="status"><span id="status-dot"></span><span id="status-text">Connecting</span></span>
+    </div>
+    <div id="terminal"></div>
+    <div id="keyboard"></div>
   </div>
-  <div id="terminal"></div>
-  <div id="trackpad-hint">&larr; &rarr; &uarr; &darr;</div>
-  <button id="kb-toggle" type="button">&#9000;</button>
-  <div id="keyboard"></div>
+  <div id="mobile-actions">
+    <button id="kb-toggle" type="button" aria-label="Use device keyboard">&#9000;</button>
+    <button id="vk-toggle" type="button" hidden aria-label="Hide virtual keyboard">&#8595;</button>
+  </div>
   <div id="notice-overlay" hidden>
     <div id="notice-card" role="dialog" aria-modal="true">
       <h2 id="notice-title"></h2>
@@ -44,7 +48,7 @@ export function getHtml(options: HtmlOptions): string {
       <h2 id="onboarding-title">Quick tour</h2>
       <ol id="onboarding-list">
         <li>On mobile, press the keyboard button to switch between virtual and OS-based keyboards.</li>
-        <li>Hold and drag on the terminal to move the text cursor.</li>
+        <li>Swipe on the terminal to scroll through recent output.</li>
       </ol>
       <p id="onboarding-error" hidden>Couldn't save this yet. Try again.</p>
       <button id="onboarding-dismiss" type="button">Got it</button>

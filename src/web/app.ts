@@ -7,18 +7,19 @@ import { createTerminalInputGuard } from "./input-guard.js";
 import { createLayoutController } from "./layout.js";
 import { createTerminalSocket, type TerminalSocketController } from "./socket.js";
 import { createStatusController } from "./status.js";
-import { attachTrackpad } from "./trackpad.js";
+import { createTouchScrollController } from "./touch-scroll.js";
 
 const isMobile = "ontouchstart" in window;
 const proto = location.protocol === "https:" ? "wss:" : "ws:";
 const wsUrl = `${proto}//${location.host}/`;
 const bootstrap = getBootstrapData();
 
+const appShellEl = mustGetElement<HTMLDivElement>("app-shell");
 const terminalEl = mustGetElement<HTMLDivElement>("terminal");
-const terminalBrandEl = mustGetElement<HTMLDivElement>("terminal-brand");
 const keyboardEl = mustGetElement<HTMLDivElement>("keyboard");
+const mobileActionsEl = mustGetElement<HTMLDivElement>("mobile-actions");
 const toggleButton = mustGetElement<HTMLButtonElement>("kb-toggle");
-const trackpadHint = mustGetElement<HTMLDivElement>("trackpad-hint");
+const virtualToggleButton = mustGetElement<HTMLButtonElement>("vk-toggle");
 const noticeOverlay = mustGetElement<HTMLDivElement>("notice-overlay");
 const noticeTitle = mustGetElement<HTMLHeadingElement>("notice-title");
 const noticeBody = mustGetElement<HTMLDivElement>("notice-body");
@@ -76,9 +77,9 @@ function sendResize(): void {
 }
 
 function focusNativeKeyboard(): void {
-  window.requestAnimationFrame(() => {
-    term.focus();
-  });
+  helperTextarea?.removeAttribute("inputmode");
+  helperTextarea?.focus({ preventScroll: true });
+  term.focus();
 }
 
 function hideNativeKeyboard(): void {
@@ -87,12 +88,13 @@ function hideNativeKeyboard(): void {
 }
 
 const layout = createLayoutController({
+  appShellEl,
   helperTextarea,
   isMobile,
   keyboardEl,
-  terminalBrandEl,
-  terminalEl,
+  mobileActionsEl,
   toggleButton,
+  virtualToggleButton,
   fit: () => fitAddon.fit(),
   focusNativeKeyboard,
   hideNativeKeyboard,
@@ -134,10 +136,20 @@ const keyboard = createKeyboardController({
     inputGuard.send(data);
   },
 });
+const touchScroll = createTouchScrollController({
+  isMobile,
+  term,
+  terminalEl,
+});
 
 toggleButton.addEventListener("click", (event) => {
   event.preventDefault();
   layout.toggleKeyboard();
+});
+
+virtualToggleButton.addEventListener("click", (event) => {
+  event.preventDefault();
+  layout.toggleCustomKeyboardVisibility();
 });
 
 term.onData((data) => {
@@ -149,20 +161,10 @@ noticeDismiss.addEventListener("click", () => {
 });
 
 keyboard.mount();
+touchScroll.mount();
 if (isMobile) {
   keyboard.render();
 }
-
-attachTrackpad({
-  focusTerminal: () => term.focus(),
-  isMobile,
-  isUsingCustomKeyboard: layout.isUsingCustomKeyboard,
-  sendKey: (data) => {
-    inputGuard.send(data);
-  },
-  terminalEl,
-  trackpadHint,
-});
 
 layout.initialize();
 layout.fitTerminal();

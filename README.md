@@ -12,7 +12,7 @@ Termi is a self-hosted Node.js CLI that runs a PTY on your machine, serves a lig
 
 - **Quick tunnel** — random `trycloudflare.com` URL each run with ephemeral browser pairing
 - **Persistent URL** — stable URL on your own Cloudflare domain with pair-once trusted browsers
-- **Mobile terminal UI** — virtual keyboard, OS keyboard toggle, drag-to-move cursor
+- **Mobile terminal UI** — virtual keyboard, OS keyboard toggle, scrollable terminal history
 - **Manage trusted browsers** — `termi devices` and `termi revoke`
 
 ## Requirements

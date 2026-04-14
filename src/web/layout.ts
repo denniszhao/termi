@@ -3,15 +3,17 @@ export interface LayoutController {
   initialize(): void;
   isUsingCustomKeyboard(): boolean;
   toggleKeyboard(): void;
+  toggleCustomKeyboardVisibility(): void;
 }
 
 interface CreateLayoutControllerOptions {
+  appShellEl: HTMLDivElement;
   helperTextarea: HTMLTextAreaElement | null;
   isMobile: boolean;
   keyboardEl: HTMLDivElement;
-  terminalBrandEl: HTMLDivElement;
-  terminalEl: HTMLDivElement;
+  mobileActionsEl: HTMLDivElement;
   toggleButton: HTMLButtonElement;
+  virtualToggleButton: HTMLButtonElement;
   fit: () => void;
   focusNativeKeyboard: () => void;
   hideNativeKeyboard: () => void;
@@ -22,12 +24,13 @@ export function createLayoutController(
   options: CreateLayoutControllerOptions,
 ): LayoutController {
   const {
+    appShellEl,
     helperTextarea,
     isMobile,
     keyboardEl,
-    terminalBrandEl,
-    terminalEl,
+    mobileActionsEl,
     toggleButton,
+    virtualToggleButton,
     fit,
     focusNativeKeyboard,
     hideNativeKeyboard,
@@ -35,47 +38,76 @@ export function createLayoutController(
   } = options;
 
   let useCustomKeyboard = isMobile;
+  let customKeyboardOpen = isMobile;
+  let lastWindowWidth = window.innerWidth;
 
-  function positionToggle(): void {
+  function getViewportHeight(): number {
+    return window.visualViewport ? window.visualViewport.height : window.innerHeight;
+  }
+
+  function syncShellHeight(): void {
+    if (!isMobile) {
+      appShellEl.style.removeProperty("height");
+      return;
+    }
+
+    appShellEl.style.height = `${getViewportHeight()}px`;
+  }
+
+  function syncKeyboardUi(): void {
     if (!isMobile) {
       return;
     }
 
-    if (useCustomKeyboard) {
-      toggleButton.style.bottom = `${keyboardEl.offsetHeight + 6}px`;
-      return;
-    }
+    const keyboardVisible = useCustomKeyboard && customKeyboardOpen;
+    keyboardEl.classList.toggle("visible", keyboardVisible);
+    const keyboardHeight = keyboardVisible ? keyboardEl.offsetHeight : 0;
+    mobileActionsEl.classList.add("visible");
+    mobileActionsEl.style.setProperty("--mobile-actions-offset", keyboardHeight > 0 ? `${keyboardHeight + 6}px` : "0px");
 
-    const viewportHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-    const keyboardHeight = window.innerHeight - viewportHeight;
-    toggleButton.style.bottom = `${keyboardHeight > 50 ? keyboardHeight + 6 : 50}px`;
+    toggleButton.classList.toggle("native-active", !useCustomKeyboard);
+    toggleButton.textContent = "\u2328";
+    toggleButton.setAttribute("aria-label", useCustomKeyboard ? "Use device keyboard" : "Use virtual keyboard");
+
+    virtualToggleButton.hidden = !useCustomKeyboard;
+    virtualToggleButton.textContent = customKeyboardOpen ? "\u2193" : "\u2191";
+    virtualToggleButton.setAttribute("aria-label", customKeyboardOpen ? "Hide virtual keyboard" : "Show virtual keyboard");
   }
 
-  function fitTerminal(): void {
-    const keyboardHeight = isMobile && useCustomKeyboard ? keyboardEl.offsetHeight : 0;
-    const viewportHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-    terminalEl.style.height = `${viewportHeight - keyboardHeight - terminalBrandEl.offsetHeight}px`;
+  function fitTerminal(notifyRemote = false): void {
+    syncShellHeight();
+    syncKeyboardUi();
     fit();
-    positionToggle();
+    syncKeyboardUi();
+    if (notifyRemote) {
+      sendResize();
+    }
+  }
+
+  function handleWindowResize(): void {
+    const nextWidth = window.innerWidth;
+    const shouldNotifyRemote = !isMobile || nextWidth !== lastWindowWidth;
+    lastWindowWidth = nextWidth;
+    fitTerminal(shouldNotifyRemote);
   }
 
   function toggleKeyboard(): void {
+    if (!isMobile) {
+      return;
+    }
+
     useCustomKeyboard = !useCustomKeyboard;
 
     if (useCustomKeyboard) {
       hideNativeKeyboard();
       helperTextarea?.setAttribute("inputMode", "none");
-      keyboardEl.classList.add("visible");
-      toggleButton.classList.remove("native-active");
+      customKeyboardOpen = true;
     } else {
-      keyboardEl.classList.remove("visible");
-      toggleButton.classList.add("native-active");
       helperTextarea?.removeAttribute("inputMode");
     }
 
-    toggleButton.textContent = "\u2328";
-    fitTerminal();
-    sendResize();
+    syncKeyboardUi();
+    fitTerminal(useCustomKeyboard);
 
     if (useCustomKeyboard) {
       hideNativeKeyboard();
@@ -84,28 +116,34 @@ export function createLayoutController(
     }
   }
 
+  function toggleCustomKeyboardVisibility(): void {
+    if (!isMobile || !useCustomKeyboard) {
+      return;
+    }
+
+    customKeyboardOpen = !customKeyboardOpen;
+    hideNativeKeyboard();
+    fitTerminal(true);
+  }
+
   function initialize(): void {
-    if (window.visualViewport) {
+    if (isMobile && window.visualViewport) {
       window.visualViewport.addEventListener("resize", () => {
         fitTerminal();
-        sendResize();
       });
     }
 
-    window.addEventListener("resize", () => {
-      fitTerminal();
-      sendResize();
-    });
+    window.addEventListener("resize", handleWindowResize);
 
     if (!isMobile) {
       return;
     }
 
     helperTextarea?.setAttribute("inputMode", "none");
-    keyboardEl.classList.add("visible");
-    toggleButton.classList.add("visible");
-    toggleButton.textContent = "\u2328";
-    window.setTimeout(positionToggle, 50);
+    syncKeyboardUi();
+    window.setTimeout(() => {
+      fitTerminal();
+    }, 50);
   }
 
   return {
@@ -113,6 +151,6 @@ export function createLayoutController(
     initialize,
     isUsingCustomKeyboard: () => useCustomKeyboard,
     toggleKeyboard,
+    toggleCustomKeyboardVisibility,
   };
 }
-
