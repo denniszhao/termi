@@ -6,13 +6,11 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import { parseCookies, serializeCookie } from "./cookies.js";
 import type { PtyHandle } from "./pty-manager.js";
+import type { AuthStrategy } from "./auth-strategy.js";
 import {
-  TRUSTED_DEVICE_COOKIE,
-  addTrustedDevice,
   createTrustedDevice,
   getHeaderValue,
   inferTrustedDeviceLabel,
-  touchTrustedDevice,
   verifyTrustedDeviceCookie,
 } from "./trusted-devices.js";
 import {
@@ -32,10 +30,7 @@ const MAX_WS_MESSAGE_BYTES = 64 * 1024;
 const FLUSH_INTERVAL_MS = 16;
 const REQUEST_URL_BASE = "http://termi.local";
 const PENDING_APPROVAL_COOKIE = "__Host-termi_pending";
-const QUICK_SESSION_COOKIE = "__Host-termi_session";
 const PENDING_APPROVAL_TTL_MS = 5 * 60 * 1000;
-const QUICK_SESSION_TTL_SECONDS = 24 * 60 * 60;
-const TRUSTED_DEVICE_TTL_SECONDS = 30 * 24 * 60 * 60;
 const SESSION_TAKEN_OVER_CLOSE_CODE = 4001;
 const SESSION_REOPENED_CLOSE_CODE = 4002;
 const SESSION_ACTIVE_ELSEWHERE_CLOSE_CODE = 4003;
@@ -84,37 +79,20 @@ type UntrustedBrowserState =
   | { kind: "replace-required" }
   | { kind: "pair-available" };
 
-export type ServerAuth =
-  | {
-      mode: "quick-pairing";
-      onPendingApprovalRequest(
-        request: PendingApprovalInfo,
-        actions: {
-          approve(): boolean;
-          reject(message?: string): boolean;
-        },
-      ): void;
-      onTrustedBrowserTakeover(label: string): void;
-      onTrustedSessionReady(): void;
-      mobileOnboardingSeen: boolean;
-      onMobileOnboardingSeen(): void;
-    }
-  | {
-      mode: "trusted-browser";
-      trustedDevices: TrustedDevice[];
-      onTrustedDevicesChange(trustedDevices: TrustedDevice[]): void;
-      onPendingApprovalRequest(
-        request: PendingApprovalInfo,
-        actions: {
-          approve(): boolean;
-          reject(message?: string): boolean;
-        },
-      ): void;
-      onTrustedBrowserTakeover(label: string): void;
-      onTrustedSessionReady(): void;
-      mobileOnboardingSeen: boolean;
-      onMobileOnboardingSeen(): void;
-    };
+export interface ServerAuth {
+  strategy: AuthStrategy;
+  onPendingApprovalRequest(
+    request: PendingApprovalInfo,
+    actions: {
+      approve(): boolean;
+      reject(message?: string): boolean;
+    },
+  ): void;
+  onTrustedBrowserTakeover(label: string): void;
+  onTrustedSessionReady(): void;
+  mobileOnboardingSeen: boolean;
+  onMobileOnboardingSeen(): void;
+}
 
 export function startServer(
   ptyHandle: PtyHandle,
@@ -145,11 +123,7 @@ export function startServer(
       }
     | undefined;
   let pendingApproval: PendingApprovalRequest | undefined;
-  let quickPairedBrowser: TrustedDevice | null = null;
-  let trustedDevices =
-    auth.mode === "trusted-browser"
-      ? [...auth.trustedDevices]
-      : [];
+  const strategy = auth.strategy;
   let historyBytes = 0;
   let pendingOutput = "";
   let flushTimer: NodeJS.Timeout | undefined;
@@ -199,38 +173,6 @@ export function startServer(
     }
   }
 
-  function getKnownBrowsers(): TrustedDevice[] {
-    return auth.mode === "trusted-browser"
-      ? trustedDevices
-      : quickPairedBrowser ? [quickPairedBrowser] : [];
-  }
-
-  function setKnownBrowsers(nextBrowsers: TrustedDevice[]): void {
-    if (auth.mode === "trusted-browser") {
-      trustedDevices = nextBrowsers;
-      auth.onTrustedDevicesChange(trustedDevices);
-      return;
-    }
-
-    quickPairedBrowser = nextBrowsers[0] ?? null;
-  }
-
-  function getAuthCookieName(): string {
-    return auth.mode === "trusted-browser"
-      ? TRUSTED_DEVICE_COOKIE
-      : QUICK_SESSION_COOKIE;
-  }
-
-  function getAuthCookieMaxAgeSeconds(): number | undefined {
-    return auth.mode === "trusted-browser"
-      ? TRUSTED_DEVICE_TTL_SECONDS
-      : QUICK_SESSION_TTL_SECONDS;
-  }
-
-  function persistTrustedDevices(nextTrustedDevices: TrustedDevice[]): void {
-    setKnownBrowsers(nextTrustedDevices);
-  }
-
   function clearPendingApproval(): void {
     pendingApproval = undefined;
   }
@@ -276,7 +218,7 @@ export function startServer(
       return null;
     }
 
-    return getKnownBrowsers().find((device) => device.id === activeClient?.browserId) ?? null;
+    return strategy.getKnownBrowsers().find((device) => device.id === activeClient?.browserId) ?? null;
   }
 
   function hasOtherActiveClient(browserId: string): boolean {
@@ -294,15 +236,11 @@ export function startServer(
 
   function getAuthenticatedBrowser(req: http.IncomingMessage): TrustedDevice | null {
     const cookies = parseCookies(req.headers.cookie);
-    return verifyTrustedDeviceCookie(cookies[getAuthCookieName()], getKnownBrowsers());
+    return verifyTrustedDeviceCookie(cookies[strategy.cookieName], strategy.getKnownBrowsers());
   }
 
   function isAuthenticatedBrowserRequest(req: http.IncomingMessage): boolean {
     return getAuthenticatedBrowser(req) !== null;
-  }
-
-  function touchAuthenticatedBrowser(deviceId: string): void {
-    persistTrustedDevices(touchTrustedDevice(getKnownBrowsers(), deviceId));
   }
 
   function generateApprovalCode(): string {
@@ -357,10 +295,7 @@ export function startServer(
     }
 
     const { device, cookieValue } = createTrustedDevice(pendingApproval.label);
-    const nextBrowsers = auth.mode === "trusted-browser"
-      ? addTrustedDevice(trustedDevices, device)
-      : [device];
-    persistTrustedDevices(nextBrowsers);
+    strategy.addApprovedBrowser(device);
     pendingApproval = {
       ...pendingApproval,
       approvedCookieValue: cookieValue,
@@ -489,9 +424,9 @@ export function startServer(
 
   function getApprovedCookieHeader(cookieValue: string): string {
     return serializeCookie(
-      getAuthCookieName(),
+      strategy.cookieName,
       cookieValue,
-      getAuthCookieMaxAgeSeconds(),
+      strategy.cookieMaxAgeSeconds,
     );
   }
 
@@ -591,7 +526,7 @@ export function startServer(
       }
 
       notifyTrustedSessionReady();
-      touchAuthenticatedBrowser(browser.id);
+      strategy.touchBrowser(browser.id);
 
       const html = getHtml({
         onboardingSeenPath: "/onboarding/seen",

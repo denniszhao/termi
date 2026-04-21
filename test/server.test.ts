@@ -3,8 +3,17 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import net from "node:net";
 import WebSocket from "ws";
-import { startServer } from "../src/server.ts";
+import {
+  startServer,
+  type PendingApprovalInfo,
+  type ServerAuth,
+  type ServerHandle,
+} from "../src/server.ts";
 import type { PtyHandle } from "../src/pty-manager.ts";
+import {
+  createQuickPairingStrategy,
+  createTrustedBrowserStrategy,
+} from "../src/auth-strategy.ts";
 import { createTrustedDevice } from "../src/trusted-devices.ts";
 
 const runServerTests = process.env.TERMI_RUN_SERVER_TESTS === "1";
@@ -40,6 +49,42 @@ class FakePty implements PtyHandle {
   }
 }
 
+type PartialServerAuth = Partial<ServerAuth>;
+
+async function setupTestServer(
+  pty: PtyHandle,
+  overrides: PartialServerAuth = {},
+): Promise<ServerHandle> {
+  const auth: ServerAuth = {
+    strategy: overrides.strategy ?? createQuickPairingStrategy(),
+    onPendingApprovalRequest: overrides.onPendingApprovalRequest ?? (() => {}),
+    onTrustedBrowserTakeover: overrides.onTrustedBrowserTakeover ?? (() => {}),
+    onTrustedSessionReady: overrides.onTrustedSessionReady ?? (() => {}),
+    mobileOnboardingSeen: overrides.mobileOnboardingSeen ?? false,
+    onMobileOnboardingSeen: overrides.onMobileOnboardingSeen ?? (() => {}),
+  };
+  return startServer(pty, auth, 0);
+}
+
+type ApprovalActions = Parameters<ServerAuth["onPendingApprovalRequest"]>[1];
+
+function captureApprovalActions(): {
+  capture: ServerAuth["onPendingApprovalRequest"];
+  get(): ApprovalActions | undefined;
+  reset(): void;
+} {
+  let actions: ApprovalActions | undefined;
+  return {
+    capture: (_request: PendingApprovalInfo, a) => {
+      actions = a;
+    },
+    get: () => actions,
+    reset: () => {
+      actions = undefined;
+    },
+  };
+}
+
 function sendRawHttp(port: number, request: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection({ host: "127.0.0.1", port });
@@ -68,25 +113,10 @@ function extractCookie(setCookieHeader: string | null, cookieName: string): stri
 
 test("server serves health and shows an explicit connect page for unauthenticated browsers", { skip: !runServerTests }, async () => {
   const pty = new FakePty();
-  let pendingApprovalActions:
-    | {
-        approve(): boolean;
-        reject(message?: string): boolean;
-      }
-    | undefined;
-  let mobileOnboardingSeen = false;
-  const server = await startServer(pty, {
-    mode: "quick-pairing",
-    onPendingApprovalRequest: (_request, actions) => {
-      pendingApprovalActions = actions;
-    },
-    onTrustedBrowserTakeover: () => {},
-    onTrustedSessionReady: () => {},
-    mobileOnboardingSeen,
-    onMobileOnboardingSeen: () => {
-      mobileOnboardingSeen = true;
-    },
-  }, 0);
+  const approval = captureApprovalActions();
+  const server = await setupTestServer(pty, {
+    onPendingApprovalRequest: approval.capture,
+  });
 
   try {
     const health = await fetch(`http://127.0.0.1:${server.port}/health`);
@@ -96,7 +126,7 @@ test("server serves health and shows an explicit connect page for unauthenticate
     const pairPage = await fetch(`http://127.0.0.1:${server.port}/`);
     assert.equal(pairPage.status, 200);
     assert.match(await pairPage.text(), /Connect This Browser/);
-    assert.equal(pendingApprovalActions, undefined);
+    assert.equal(approval.get(), undefined);
   } finally {
     server.close();
   }
@@ -104,35 +134,20 @@ test("server serves health and shows an explicit connect page for unauthenticate
 
 test("quick mode approves a pending browser locally and then allows websocket access", { skip: !runServerTests }, async () => {
   const pty = new FakePty();
-  let pendingApprovalActions:
-    | {
-        approve(): boolean;
-        reject(message?: string): boolean;
-      }
-    | undefined;
+  const approval = captureApprovalActions();
   let trustedSessionReadyCount = 0;
-  const server = await startServer(
-    pty,
-    {
-      mode: "quick-pairing",
-      onPendingApprovalRequest: (_request, actions) => {
-        pendingApprovalActions = actions;
-      },
-      onTrustedBrowserTakeover: () => {},
-      onTrustedSessionReady: () => {
-        trustedSessionReadyCount += 1;
-      },
-      mobileOnboardingSeen: false,
-      onMobileOnboardingSeen: () => {},
+  const server = await setupTestServer(pty, {
+    onPendingApprovalRequest: approval.capture,
+    onTrustedSessionReady: () => {
+      trustedSessionReadyCount += 1;
     },
-    0,
-  );
+  });
 
   try {
     const pairPage = await fetch(`http://127.0.0.1:${server.port}/`);
     assert.equal(pairPage.status, 200);
     assert.match(await pairPage.text(), /Connect This Browser/);
-    assert.equal(pendingApprovalActions, undefined);
+    assert.equal(approval.get(), undefined);
 
     const pairRequest = await fetch(`http://127.0.0.1:${server.port}/pair/request`, {
       method: "POST",
@@ -142,14 +157,14 @@ test("quick mode approves a pending browser locally and then allows websocket ac
       redirect: "manual",
     });
     assert.equal(pairRequest.status, 303);
-    assert.ok(pendingApprovalActions);
+    assert.ok(approval.get());
 
     const pendingCookie = extractCookie(
       pairRequest.headers.get("set-cookie"),
       "__Host-termi_pending",
     );
 
-    assert.equal(pendingApprovalActions.approve(), true);
+    assert.equal(approval.get()!.approve(), true);
     const statusResponse = await fetch(`http://127.0.0.1:${server.port}/pair/status`, {
       headers: {
         Cookie: pendingCookie,
@@ -205,40 +220,27 @@ test("quick mode approves a pending browser locally and then allows websocket ac
 
 test("persistent mode approves a pending browser locally and then allows websocket access", { skip: !runServerTests }, async () => {
   const pty = new FakePty();
-  let pendingApprovalActions:
-    | {
-        approve(): boolean;
-        reject(): boolean;
-      }
-    | undefined;
+  const approval = captureApprovalActions();
   let trustedSessionReadyCount = 0;
   let trustedDevices: Array<{ id: string; secretHash: string; createdAt: string; lastSeenAt: string; label?: string }> = [];
-  const server = await startServer(
-    pty,
-    {
-      mode: "trusted-browser",
-      trustedDevices,
-      onTrustedDevicesChange: (nextTrustedDevices) => {
-        trustedDevices = nextTrustedDevices;
+  const server = await setupTestServer(pty, {
+    strategy: createTrustedBrowserStrategy({
+      initialDevices: trustedDevices,
+      onChange: (next) => {
+        trustedDevices = next;
       },
-      onPendingApprovalRequest: (_request, actions) => {
-        pendingApprovalActions = actions;
-      },
-      onTrustedBrowserTakeover: () => {},
-      onTrustedSessionReady: () => {
-        trustedSessionReadyCount += 1;
-      },
-      mobileOnboardingSeen: false,
-      onMobileOnboardingSeen: () => {},
+    }),
+    onPendingApprovalRequest: approval.capture,
+    onTrustedSessionReady: () => {
+      trustedSessionReadyCount += 1;
     },
-    0,
-  );
+  });
 
   try {
     const pairPage = await fetch(`http://127.0.0.1:${server.port}/`);
     assert.equal(pairPage.status, 200);
     assert.match(await pairPage.text(), /Connect This Browser/);
-    assert.equal(pendingApprovalActions, undefined);
+    assert.equal(approval.get(), undefined);
 
     const pairRequest = await fetch(`http://127.0.0.1:${server.port}/pair/request`, {
       method: "POST",
@@ -248,14 +250,14 @@ test("persistent mode approves a pending browser locally and then allows websock
       redirect: "manual",
     });
     assert.equal(pairRequest.status, 303);
-    assert.ok(pendingApprovalActions);
+    assert.ok(approval.get());
 
     const pendingCookie = extractCookie(
       pairRequest.headers.get("set-cookie"),
       "__Host-termi_pending",
     );
 
-    assert.equal(pendingApprovalActions.approve(), true);
+    assert.equal(approval.get()!.approve(), true);
 
     const statusResponse = await fetch(`http://127.0.0.1:${server.port}/pair/status`, {
       headers: {
@@ -293,14 +295,7 @@ test("persistent mode approves a pending browser locally and then allows websock
 
 test("server returns 400 for malformed request hosts without crashing", { skip: !runServerTests }, async () => {
   const pty = new FakePty();
-  const server = await startServer(pty, {
-    mode: "quick-pairing",
-    onPendingApprovalRequest: () => {},
-    onTrustedBrowserTakeover: () => {},
-    onTrustedSessionReady: () => {},
-    mobileOnboardingSeen: false,
-    onMobileOnboardingSeen: () => {},
-  }, 0);
+  const server = await setupTestServer(pty);
 
   try {
     const response = await sendRawHttp(
@@ -318,20 +313,12 @@ test("server returns 400 for malformed request hosts without crashing", { skip: 
 
 test("persistent mode ignores malformed trusted-device cookies", { skip: !runServerTests }, async () => {
   const pty = new FakePty();
-  const server = await startServer(
-    pty,
-    {
-      mode: "trusted-browser",
-      trustedDevices: [],
-      onTrustedDevicesChange: () => {},
-      onPendingApprovalRequest: () => {},
-      onTrustedBrowserTakeover: () => {},
-      onTrustedSessionReady: () => {},
-      mobileOnboardingSeen: false,
-      onMobileOnboardingSeen: () => {},
-    },
-    0,
-  );
+  const server = await setupTestServer(pty, {
+    strategy: createTrustedBrowserStrategy({
+      initialDevices: [],
+      onChange: () => {},
+    }),
+  });
 
   try {
     const response = await fetch(`http://127.0.0.1:${server.port}/`, {
@@ -349,22 +336,15 @@ test("persistent mode ignores malformed trusted-device cookies", { skip: !runSer
 
 test("server does not render a verification code when approval is rejected immediately", { skip: !runServerTests }, async () => {
   const pty = new FakePty();
-  const server = await startServer(
-    pty,
-    {
-      mode: "trusted-browser",
-      trustedDevices: [],
-      onTrustedDevicesChange: () => {},
-      onPendingApprovalRequest: (_request, actions) => {
-        actions.reject("Local approval is unavailable right now.");
-      },
-      onTrustedBrowserTakeover: () => {},
-      onTrustedSessionReady: () => {},
-      mobileOnboardingSeen: false,
-      onMobileOnboardingSeen: () => {},
+  const server = await setupTestServer(pty, {
+    strategy: createTrustedBrowserStrategy({
+      initialDevices: [],
+      onChange: () => {},
+    }),
+    onPendingApprovalRequest: (_request, actions) => {
+      actions.reject("Local approval is unavailable right now.");
     },
-    0,
-  );
+  });
 
   try {
     const response = await fetch(`http://127.0.0.1:${server.port}/pair/request`, {
@@ -386,26 +366,10 @@ test("server does not render a verification code when approval is rejected immed
 
 test("quick mode requires explicit replacement before a second browser can pair over an active session", { skip: !runServerTests }, async () => {
   const pty = new FakePty();
-  let pendingApprovalActions:
-    | {
-        approve(): boolean;
-        reject(message?: string): boolean;
-      }
-    | undefined;
-  const server = await startServer(
-    pty,
-    {
-      mode: "quick-pairing",
-      onPendingApprovalRequest: (_request, actions) => {
-        pendingApprovalActions = actions;
-      },
-      onTrustedBrowserTakeover: () => {},
-      onTrustedSessionReady: () => {},
-      mobileOnboardingSeen: false,
-      onMobileOnboardingSeen: () => {},
-    },
-    0,
-  );
+  const approval = captureApprovalActions();
+  const server = await setupTestServer(pty, {
+    onPendingApprovalRequest: approval.capture,
+  });
 
   try {
     const firstPairRequest = await fetch(`http://127.0.0.1:${server.port}/pair/request`, {
@@ -419,8 +383,8 @@ test("quick mode requires explicit replacement before a second browser can pair 
       firstPairRequest.headers.get("set-cookie"),
       "__Host-termi_pending",
     );
-    assert.ok(pendingApprovalActions);
-    assert.equal(pendingApprovalActions.approve(), true);
+    assert.ok(approval.get());
+    assert.equal(approval.get()!.approve(), true);
 
     const firstStatusResponse = await fetch(`http://127.0.0.1:${server.port}/pair/status`, {
       headers: {
@@ -437,13 +401,13 @@ test("quick mode requires explicit replacement before a second browser can pair 
     });
     await once(firstWs, "open");
 
-    pendingApprovalActions = undefined;
+    approval.reset();
     const blockedPage = await fetch(`http://127.0.0.1:${server.port}/`);
     const blockedHtml = await blockedPage.text();
     assert.equal(blockedPage.status, 200);
     assert.match(blockedHtml, /Connect This Browser/);
     assert.match(blockedHtml, /replacing it/);
-    assert.equal(pendingApprovalActions, undefined);
+    assert.equal(approval.get(), undefined);
 
     const replaceRequest = await fetch(`http://127.0.0.1:${server.port}/pair/request`, {
       method: "POST",
@@ -453,14 +417,14 @@ test("quick mode requires explicit replacement before a second browser can pair 
       redirect: "manual",
     });
     assert.equal(replaceRequest.status, 303);
-    assert.ok(pendingApprovalActions);
+    assert.ok(approval.get());
 
     const replacementPendingCookie = extractCookie(
       replaceRequest.headers.get("set-cookie"),
       "__Host-termi_pending",
     );
     const closePromise = once(firstWs, "close");
-    assert.equal(pendingApprovalActions.approve(), true);
+    assert.equal(approval.get()!.approve(), true);
 
     const replacementStatus = await fetch(`http://127.0.0.1:${server.port}/pair/status`, {
       headers: {
@@ -498,29 +462,15 @@ test("quick mode requires explicit replacement before a second browser can pair 
 
 test("untrusted browsers must explicitly request replacement before pairing over an active session", { skip: !runServerTests }, async () => {
   const pty = new FakePty();
-  let pendingApprovalActions:
-    | {
-        approve(): boolean;
-        reject(message?: string): boolean;
-      }
-    | undefined;
+  const approval = captureApprovalActions();
   const first = createTrustedDevice("First phone");
-  const server = await startServer(
-    pty,
-    {
-      mode: "trusted-browser",
-      trustedDevices: [first.device],
-      onTrustedDevicesChange: () => {},
-      onPendingApprovalRequest: (_request, actions) => {
-        pendingApprovalActions = actions;
-      },
-      onTrustedBrowserTakeover: () => {},
-      onTrustedSessionReady: () => {},
-      mobileOnboardingSeen: false,
-      onMobileOnboardingSeen: () => {},
-    },
-    0,
-  );
+  const server = await setupTestServer(pty, {
+    strategy: createTrustedBrowserStrategy({
+      initialDevices: [first.device],
+      onChange: () => {},
+    }),
+    onPendingApprovalRequest: approval.capture,
+  });
 
   try {
     const firstWs = new WebSocket(`ws://127.0.0.1:${server.port}/`, {
@@ -537,7 +487,7 @@ test("untrusted browsers must explicitly request replacement before pairing over
     assert.match(blockedHtml, /Connect This Browser/);
     assert.match(blockedHtml, /replacing it/);
     assert.doesNotMatch(blockedHtml, /First phone/);
-    assert.equal(pendingApprovalActions, undefined);
+    assert.equal(approval.get(), undefined);
 
     const replaceRequest = await fetch(`http://127.0.0.1:${server.port}/pair/request`, {
       method: "POST",
@@ -547,7 +497,7 @@ test("untrusted browsers must explicitly request replacement before pairing over
       redirect: "manual",
     });
     assert.equal(replaceRequest.status, 303);
-    assert.ok(pendingApprovalActions);
+    assert.ok(approval.get());
 
     const pendingCookie = extractCookie(
       replaceRequest.headers.get("set-cookie"),
@@ -563,7 +513,7 @@ test("untrusted browsers must explicitly request replacement before pairing over
     assert.match(await pendingPage.text(), /Approve This Browser/);
 
     const closePromise = once(firstWs, "close");
-    assert.equal(pendingApprovalActions.approve(), true);
+    assert.equal(approval.get()!.approve(), true);
 
     const statusResponse = await fetch(`http://127.0.0.1:${server.port}/pair/status`, {
       headers: {
@@ -597,22 +547,15 @@ test("trusted browsers require an explicit takeover when another trusted browser
   const first = createTrustedDevice("First phone");
   const second = createTrustedDevice("Second phone");
   const takeoverLabels: string[] = [];
-  const server = await startServer(
-    pty,
-    {
-      mode: "trusted-browser",
-      trustedDevices: [first.device, second.device],
-      onTrustedDevicesChange: () => {},
-      onPendingApprovalRequest: () => {},
-      onTrustedBrowserTakeover: (label) => {
-        takeoverLabels.push(label);
-      },
-      onTrustedSessionReady: () => {},
-      mobileOnboardingSeen: false,
-      onMobileOnboardingSeen: () => {},
+  const server = await setupTestServer(pty, {
+    strategy: createTrustedBrowserStrategy({
+      initialDevices: [first.device, second.device],
+      onChange: () => {},
+    }),
+    onTrustedBrowserTakeover: (label) => {
+      takeoverLabels.push(label);
     },
-    0,
-  );
+  });
 
   try {
     const firstPage = await fetch(`http://127.0.0.1:${server.port}/`, {
@@ -687,22 +630,10 @@ test("trusted browsers require an explicit takeover when another trusted browser
 
 test("server rejects oversized websocket messages and ignores invalid resize payloads", { skip: !runServerTests }, async () => {
   const pty = new FakePty();
-  let pendingApprovalActions:
-    | {
-        approve(): boolean;
-        reject(message?: string): boolean;
-      }
-    | undefined;
-  const server = await startServer(pty, {
-    mode: "quick-pairing",
-    onPendingApprovalRequest: (_request, actions) => {
-      pendingApprovalActions = actions;
-    },
-    onTrustedBrowserTakeover: () => {},
-    onTrustedSessionReady: () => {},
-    mobileOnboardingSeen: false,
-    onMobileOnboardingSeen: () => {},
-  }, 0);
+  const approval = captureApprovalActions();
+  const server = await setupTestServer(pty, {
+    onPendingApprovalRequest: approval.capture,
+  });
 
   try {
     const pairRequest = await fetch(`http://127.0.0.1:${server.port}/pair/request`, {
@@ -713,8 +644,8 @@ test("server rejects oversized websocket messages and ignores invalid resize pay
       redirect: "manual",
     });
     const pendingCookie = extractCookie(pairRequest.headers.get("set-cookie"), "__Host-termi_pending");
-    assert.ok(pendingApprovalActions);
-    assert.equal(pendingApprovalActions.approve(), true);
+    assert.ok(approval.get());
+    assert.equal(approval.get()!.approve(), true);
 
     const statusResponse = await fetch(`http://127.0.0.1:${server.port}/pair/status`, {
       headers: {
@@ -751,25 +682,15 @@ test("server rejects oversized websocket messages and ignores invalid resize pay
 
 test("server only shows onboarding for mobile until it is acknowledged", { skip: !runServerTests }, async () => {
   const pty = new FakePty();
-  let pendingApprovalActions:
-    | {
-        approve(): boolean;
-        reject(message?: string): boolean;
-      }
-    | undefined;
+  const approval = captureApprovalActions();
   let mobileOnboardingSeen = false;
-  const server = await startServer(pty, {
-    mode: "quick-pairing",
-    onPendingApprovalRequest: (_request, actions) => {
-      pendingApprovalActions = actions;
-    },
-    onTrustedBrowserTakeover: () => {},
-    onTrustedSessionReady: () => {},
+  const server = await setupTestServer(pty, {
+    onPendingApprovalRequest: approval.capture,
     mobileOnboardingSeen,
     onMobileOnboardingSeen: () => {
       mobileOnboardingSeen = true;
     },
-  }, 0);
+  });
 
   try {
     const pairRequest = await fetch(`http://127.0.0.1:${server.port}/pair/request`, {
@@ -780,8 +701,8 @@ test("server only shows onboarding for mobile until it is acknowledged", { skip:
       redirect: "manual",
     });
     const pendingCookie = extractCookie(pairRequest.headers.get("set-cookie"), "__Host-termi_pending");
-    assert.ok(pendingApprovalActions);
-    assert.equal(pendingApprovalActions.approve(), true);
+    assert.ok(approval.get());
+    assert.equal(approval.get()!.approve(), true);
 
     const statusResponse = await fetch(`http://127.0.0.1:${server.port}/pair/status`, {
       headers: {
