@@ -1,10 +1,11 @@
 import {
-  intro,
-  select,
-  text,
+  cancel,
   confirm,
-  spinner,
+  intro,
   note,
+  select,
+  spinner,
+  text,
 } from "@clack/prompts";
 import chalk from "chalk";
 import { BRAND, DEFAULT_PORT } from "./constants.js";
