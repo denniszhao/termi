@@ -16,9 +16,6 @@ export interface TermiSavedConfig {
   mobileOnboardingSeen: boolean;
 }
 
-export interface WsClientMessage {
-  type: "data" | "resize";
-  data?: string;
-  cols?: number;
-  rows?: number;
-}
+export type WsClientMessage =
+  | { type: "data"; data: string }
+  | { type: "resize"; cols: number; rows: number };
