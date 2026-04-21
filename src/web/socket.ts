@@ -10,15 +10,29 @@ interface CreateTerminalSocketOptions {
   wsUrl: string;
   onSessionEnded?: () => void;
   onSessionReplaced?: () => void;
+  onSessionReopened?: () => void;
   onData: (data: string) => void;
   onOpen: () => void;
   onStateChange: (state: TerminalSocketState) => void;
 }
 
+const SESSION_ENDED_CLOSE_CODE = 4000;
+const SESSION_REPLACED_CLOSE_CODE = 4001;
+const SESSION_REOPENED_CLOSE_CODE = 4002;
+const SESSION_ACTIVE_ELSEWHERE_CLOSE_CODE = 4003;
+
 export function createTerminalSocket(
   options: CreateTerminalSocketOptions,
 ): TerminalSocketController {
-  const { wsUrl, onData, onOpen, onSessionEnded, onSessionReplaced, onStateChange } = options;
+  const {
+    wsUrl,
+    onData,
+    onOpen,
+    onSessionEnded,
+    onSessionReplaced,
+    onSessionReopened,
+    onStateChange,
+  } = options;
   let ws: WebSocket | undefined;
   let reconnectTimer: number | undefined;
 
@@ -62,12 +76,16 @@ export function createTerminalSocket(
       }
       ws = undefined;
       onStateChange("disconnected");
-      if (event.code === 4000) {
+      if (event.code === SESSION_ENDED_CLOSE_CODE) {
         onSessionEnded?.();
         return;
       }
-      if (event.code === 4001) {
+      if (event.code === SESSION_REPLACED_CLOSE_CODE || event.code === SESSION_ACTIVE_ELSEWHERE_CLOSE_CODE) {
         onSessionReplaced?.();
+        return;
+      }
+      if (event.code === SESSION_REOPENED_CLOSE_CODE) {
+        onSessionReopened?.();
         return;
       }
       scheduleReconnect();

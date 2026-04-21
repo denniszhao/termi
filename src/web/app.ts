@@ -53,6 +53,10 @@ function showNotice(title: string, body: string, dismissable = false): void {
   noticeOverlay.hidden = false;
 }
 
+function hideNotice(): void {
+  noticeOverlay.hidden = true;
+}
+
 let socket: TerminalSocketController;
 const status = createStatusController();
 const inputGuard = createTerminalInputGuard({
@@ -117,10 +121,18 @@ socket = createTerminalSocket({
       + "<p>You can close this tab or refresh to reconnect.</p>",
     );
   },
+  onSessionReopened: () => {
+    showNotice(
+      "Session Reopened",
+      "<p>This Termi session was reopened in another tab or window of the same browser.</p>"
+      + "<p>You can close this tab or refresh to make it active again.</p>",
+    );
+  },
   onData: (data) => {
     term.write(data);
   },
   onOpen: () => {
+    hideNotice();
     layout.fitTerminal();
     sendResize();
   },
@@ -157,7 +169,7 @@ term.onData((data) => {
 });
 
 noticeDismiss.addEventListener("click", () => {
-  noticeOverlay.hidden = true;
+  hideNotice();
 });
 
 keyboard.mount();

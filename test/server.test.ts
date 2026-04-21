@@ -670,7 +670,7 @@ test("trusted browsers require an explicit takeover when another trusted browser
     });
     displacedWs.on("error", () => {});
     const [displacedCloseCode] = await once(displacedWs, "close");
-    assert.equal(displacedCloseCode, 4001);
+    assert.equal(displacedCloseCode, 4003);
 
     const secondPage = await fetch(`http://127.0.0.1:${server.port}/`, {
       headers: {
