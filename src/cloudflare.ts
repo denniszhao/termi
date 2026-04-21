@@ -43,27 +43,43 @@ export function parseCertToken(certFile: string): CloudflareTokenInfo | null {
   }
 }
 
+const CLOUDFLARE_API_BASE = "https://api.cloudflare.com/client/v4";
+const CLOUDFLARE_API_TIMEOUT_MS = 10_000;
+
+async function cloudflareFetch<T>(
+  path: string,
+  apiToken: string,
+  init: RequestInit = {},
+): Promise<T | null> {
+  try {
+    const res = await fetch(`${CLOUDFLARE_API_BASE}${path}`, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${apiToken}`,
+        "Content-Type": "application/json",
+        ...init.headers,
+      },
+      signal: AbortSignal.timeout(CLOUDFLARE_API_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    if (res.status === 204 || init.method === "DELETE") {
+      return {} as T;
+    }
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchCloudflareDomains(
   accountID: string,
   apiToken: string,
 ): Promise<string[]> {
-  try {
-    const res = await fetch(
-      `https://api.cloudflare.com/client/v4/zones?account.id=${accountID}&status=active&per_page=50`,
-      {
-        headers: {
-          Authorization: `Bearer ${apiToken}`,
-          "Content-Type": "application/json",
-        },
-        signal: AbortSignal.timeout(10_000),
-      },
-    );
-    if (!res.ok) return [];
-    const data = await res.json() as { result?: { name: string }[] };
-    return (data.result || []).map((zone) => zone.name);
-  } catch {
-    return [];
-  }
+  const data = await cloudflareFetch<{ result?: { name: string }[] }>(
+    `/zones?account.id=${accountID}&status=active&per_page=50`,
+    apiToken,
+  );
+  return (data?.result ?? []).map((zone) => zone.name);
 }
 
 export async function fetchCloudflareZoneId(
@@ -71,23 +87,11 @@ export async function fetchCloudflareZoneId(
   apiToken: string,
   zoneName: string,
 ): Promise<string | null> {
-  try {
-    const res = await fetch(
-      `https://api.cloudflare.com/client/v4/zones?account.id=${accountID}&name=${encodeURIComponent(zoneName)}&status=active&per_page=1`,
-      {
-        headers: {
-          Authorization: `Bearer ${apiToken}`,
-          "Content-Type": "application/json",
-        },
-        signal: AbortSignal.timeout(10_000),
-      },
-    );
-    if (!res.ok) return null;
-    const data = await res.json() as { result?: { id: string }[] };
-    return data.result?.[0]?.id ?? null;
-  } catch {
-    return null;
-  }
+  const data = await cloudflareFetch<{ result?: { id: string }[] }>(
+    `/zones?account.id=${accountID}&name=${encodeURIComponent(zoneName)}&status=active&per_page=1`,
+    apiToken,
+  );
+  return data?.result?.[0]?.id ?? null;
 }
 
 export async function fetchCloudflareDnsRecord(
@@ -95,31 +99,21 @@ export async function fetchCloudflareDnsRecord(
   apiToken: string,
   hostname: string,
 ): Promise<CloudflareDnsRecord | null> {
-  try {
-    const res = await fetch(
-      `https://api.cloudflare.com/client/v4/zones/${zoneId}/dns_records?name=${encodeURIComponent(hostname)}&per_page=20`,
-      {
-        headers: {
-          Authorization: `Bearer ${apiToken}`,
-          "Content-Type": "application/json",
-        },
-        signal: AbortSignal.timeout(10_000),
-      },
-    );
-    if (!res.ok) return null;
-    const data = await res.json() as { result?: Array<{ id: string; type: string; content: string }> };
-    const record = data.result?.[0];
-    if (!record) {
-      return null;
-    }
-    return {
-      id: record.id,
-      type: record.type,
-      content: record.content,
-    };
-  } catch {
+  const data = await cloudflareFetch<{
+    result?: Array<{ id: string; type: string; content: string }>;
+  }>(
+    `/zones/${zoneId}/dns_records?name=${encodeURIComponent(hostname)}&per_page=20`,
+    apiToken,
+  );
+  const record = data?.result?.[0];
+  if (!record) {
     return null;
   }
+  return {
+    id: record.id,
+    type: record.type,
+    content: record.content,
+  };
 }
 
 export async function deleteCloudflareDnsRecord(
@@ -127,22 +121,12 @@ export async function deleteCloudflareDnsRecord(
   apiToken: string,
   recordId: string,
 ): Promise<boolean> {
-  try {
-    const res = await fetch(
-      `https://api.cloudflare.com/client/v4/zones/${zoneId}/dns_records/${recordId}`,
-      {
-        method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${apiToken}`,
-          "Content-Type": "application/json",
-        },
-        signal: AbortSignal.timeout(10_000),
-      },
-    );
-    return res.ok;
-  } catch {
-    return false;
-  }
+  const result = await cloudflareFetch<unknown>(
+    `/zones/${zoneId}/dns_records/${recordId}`,
+    apiToken,
+    { method: "DELETE" },
+  );
+  return result !== null;
 }
 
 export function ensureCloudflareAuth(cloudflaredPath: string): void {
