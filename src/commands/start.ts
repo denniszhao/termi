@@ -6,6 +6,10 @@ import {
   type PendingApprovalInfo,
   type ServerAuth,
 } from "../server.js";
+import {
+  createQuickPairingStrategy,
+  createTrustedBrowserStrategy,
+} from "../auth-strategy.js";
 import { startTunnel, startNamedTunnel, TunnelHandle } from "../tunnel.js";
 import {
   printBanner,
@@ -63,29 +67,21 @@ function createServerAuth(
 ): ServerAuth {
   const mobileOnboardingSeen = getMobileOnboardingSeen();
 
-  if (config.mode === "persistent" && config.savedConfig) {
-    return {
-      mode: "trusted-browser",
-      trustedDevices: config.savedConfig.trustedDevices,
-      mobileOnboardingSeen,
-      onTrustedDevicesChange: (trustedDevices) => {
-        config.savedConfig = {
-          ...config.savedConfig!,
-          trustedDevices,
-        };
-        saveConfig(config.savedConfig);
-      },
-      onPendingApprovalRequest,
-      onTrustedBrowserTakeover,
-      onMobileOnboardingSeen: () => {
-        markMobileOnboardingSeen();
-      },
-      onTrustedSessionReady,
-    };
-  }
+  const strategy = config.mode === "persistent" && config.savedConfig
+    ? createTrustedBrowserStrategy({
+        initialDevices: config.savedConfig.trustedDevices,
+        onChange: (trustedDevices) => {
+          config.savedConfig = {
+            ...config.savedConfig!,
+            trustedDevices,
+          };
+          saveConfig(config.savedConfig);
+        },
+      })
+    : createQuickPairingStrategy();
 
   return {
-    mode: "quick-pairing",
+    strategy,
     mobileOnboardingSeen,
     onPendingApprovalRequest,
     onTrustedBrowserTakeover,
@@ -249,8 +245,8 @@ export async function startCommand(): Promise<void> {
 
   printBanner(version);
   printSessionInfo(url, config.mode === "persistent" ? "persistent" : "tunnel");
-  if (serverAuth.mode !== "quick-pairing") {
-    printPersistentAccessInfo(serverAuth.trustedDevices.length > 0);
+  if (config.mode === "persistent") {
+    printPersistentAccessInfo(serverAuth.strategy.getKnownBrowsers().length > 0);
     printWaitingForTrustedBrowser();
     localTerminalMayAttach = true;
     if (trustedSessionReady) {
