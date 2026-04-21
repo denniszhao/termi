@@ -779,12 +779,6 @@ export function startServer(
       return;
     }
 
-    if (hasOtherActiveClient(browser.id)) {
-      socket.write("HTTP/1.1 409 Conflict\r\n\r\n");
-      socket.destroy();
-      return;
-    }
-
     notifyTrustedSessionReady();
 
     wss.handleUpgrade(req, socket, head, (ws) => {
@@ -796,6 +790,11 @@ export function startServer(
     const browser = getAuthenticatedBrowser(req);
     if (!browser) {
       ws.close(4000, "Unauthorized");
+      return;
+    }
+
+    if (hasOtherActiveClient(browser.id)) {
+      ws.close(TAKEOVER_CLOSE_CODE, "Session already active in another browser");
       return;
     }
 
