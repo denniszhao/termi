@@ -8,6 +8,7 @@ import {
   type PendingApprovalInfo,
   type ServerAuth,
   type ServerHandle,
+  type ServerOptions,
 } from "../src/server.ts";
 import type { PtyHandle } from "../src/pty-manager.ts";
 import {
@@ -54,6 +55,7 @@ type PartialServerAuth = Partial<ServerAuth>;
 async function setupTestServer(
   pty: PtyHandle,
   overrides: PartialServerAuth = {},
+  serverOptions: ServerOptions = {},
 ): Promise<ServerHandle> {
   const auth: ServerAuth = {
     strategy: overrides.strategy ?? createQuickPairingStrategy(),
@@ -63,7 +65,7 @@ async function setupTestServer(
     mobileOnboardingSeen: overrides.mobileOnboardingSeen ?? false,
     onMobileOnboardingSeen: overrides.onMobileOnboardingSeen ?? (() => {}),
   };
-  return startServer(pty, auth, 0);
+  return startServer(pty, auth, 0, serverOptions);
 }
 
 type ApprovalActions = Parameters<ServerAuth["onPendingApprovalRequest"]>[1];
@@ -737,6 +739,36 @@ test("server only shows onboarding for mobile until it is acknowledged", { skip:
       },
     });
     assert.match(await seenPage.text(), /"showOnboarding":false/);
+  } finally {
+    server.close();
+  }
+});
+
+test("server pings websocket clients on a heartbeat interval", { skip: !runServerTests }, async () => {
+  const pty = new FakePty();
+  const trusted = createTrustedDevice("Test device");
+  const server = await setupTestServer(
+    pty,
+    {
+      strategy: createTrustedBrowserStrategy({
+        initialDevices: [trusted.device],
+        onChange: () => {},
+      }),
+    },
+    { heartbeatIntervalMs: 40 },
+  );
+
+  try {
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`, {
+      headers: {
+        Cookie: `__Host-termi_trust=${trusted.cookieValue}`,
+        Origin: `http://127.0.0.1:${server.port}`,
+      },
+    });
+    ws.on("error", () => {});
+    await once(ws, "open");
+    await once(ws, "ping");
+    ws.close();
   } finally {
     server.close();
   }

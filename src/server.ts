@@ -28,6 +28,7 @@ const HISTORY_LIMIT_BYTES = 512 * 1024;
 const CLIENT_BUFFER_LIMIT_BYTES = 1024 * 1024;
 const MAX_WS_MESSAGE_BYTES = 64 * 1024;
 const FLUSH_INTERVAL_MS = 16;
+const HEARTBEAT_INTERVAL_MS = 25_000;
 const REQUEST_URL_BASE = "http://termi.local";
 const PENDING_APPROVAL_COOKIE = "__Host-termi_pending";
 const PENDING_APPROVAL_TTL_MS = 5 * 60 * 1000;
@@ -56,6 +57,10 @@ function resolvePublicDir(): string {
 export interface ServerHandle {
   port: number;
   close(): void;
+}
+
+export interface ServerOptions {
+  heartbeatIntervalMs?: number;
 }
 
 export interface PendingApprovalInfo {
@@ -98,7 +103,9 @@ export function startServer(
   ptyHandle: PtyHandle,
   auth: ServerAuth,
   port: number,
+  options: ServerOptions = {},
 ): Promise<ServerHandle> {
+  const heartbeatIntervalMs = options.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS;
   const publicDir = resolvePublicDir();
   const appJs = readFileSync(join(publicDir, "app.js"));
   const appCss = readFileSync(join(publicDir, "app.css"));
@@ -700,6 +707,21 @@ export function startServer(
   });
 
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_WS_MESSAGE_BYTES });
+  const aliveClients = new WeakSet<WebSocket>();
+
+  // Detect silently-dead mobile connections (e.g., network drops without
+  // a TCP FIN). Without this, activeClient can stay pinned to a dead
+  // socket for minutes, blocking other browsers from attaching.
+  const heartbeatInterval = setInterval(() => {
+    for (const ws of clients) {
+      if (!aliveClients.has(ws)) {
+        ws.terminate();
+        continue;
+      }
+      aliveClients.delete(ws);
+      ws.ping();
+    }
+  }, heartbeatIntervalMs);
 
   server.on("upgrade", (req, socket, head) => {
     const url = parseRequestUrl(req);
@@ -753,6 +775,11 @@ export function startServer(
     }
 
     clients.add(ws);
+    aliveClients.add(ws);
+
+    ws.on("pong", () => {
+      aliveClients.add(ws);
+    });
 
     ws.on("message", (raw) => {
       try {
@@ -810,6 +837,7 @@ export function startServer(
         resolve({
           port: actualPort,
           close: () => {
+            clearInterval(heartbeatInterval);
             if (flushTimer) {
               clearTimeout(flushTimer);
             }
