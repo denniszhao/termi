@@ -27,7 +27,7 @@ export function printSessionInfo(url: string, mode: string): void {
     console.log("");
     console.log(chalk.dim("  Scan the QR code or open the URL on your phone."));
     if (!isPersistent) {
-      console.log(chalk.dim("  Cloudflare may need a short time to make the quick-tunnel URL reachable."));
+      console.log(chalk.dim("  Cloudflare may need a few minutes to make the quick-tunnel URL reachable."));
       console.log(chalk.dim("  If the page does not load right away, wait a bit and try again."));
     }
     console.log(chalk.dim("  Type 'exit' or press Ctrl+D to stop."));

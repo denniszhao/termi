@@ -57,7 +57,7 @@ termi --help
 
 ## Modes
 
-**Quick tunnel** — A random `trycloudflare.com` URL is generated each run. Browsers pair explicitly through local approval, receive an ephemeral cookie, and are not remembered after the session ends.
+**Quick tunnel** — A random `trycloudflare.com` URL is generated each run. Browsers pair explicitly through local approval, receive an ephemeral cookie, and are not remembered after the session ends. Cloudflare DNS for the quick-tunnel URL can take a few minutes to become reachable, so if the page does not load right away, wait a bit and try again.
 
 **Persistent URL** — A stable URL on your Cloudflare domain. New browsers go through a local approval flow (a 6-character code is verified on both sides), then become trusted. Trusted browsers reconnect without pairing again.
 
