@@ -36,7 +36,9 @@ const QUICK_SESSION_COOKIE = "__Host-termi_session";
 const PENDING_APPROVAL_TTL_MS = 5 * 60 * 1000;
 const QUICK_SESSION_TTL_SECONDS = 24 * 60 * 60;
 const TRUSTED_DEVICE_TTL_SECONDS = 30 * 24 * 60 * 60;
-const TAKEOVER_CLOSE_CODE = 4001;
+const SESSION_TAKEN_OVER_CLOSE_CODE = 4001;
+const SESSION_REOPENED_CLOSE_CODE = 4002;
+const SESSION_ACTIVE_ELSEWHERE_CLOSE_CODE = 4003;
 const APPROVAL_CODE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 const APPROVAL_CODE_LENGTH = 6;
 
@@ -622,7 +624,7 @@ export function startServer(
           const previousActiveClient = activeClient;
           activeClient = undefined;
           previousActiveClient.ws.close(
-            TAKEOVER_CLOSE_CODE,
+            SESSION_TAKEN_OVER_CLOSE_CODE,
             "Session replaced by a newly approved browser",
           );
         }
@@ -747,7 +749,7 @@ export function startServer(
         const previousActiveClient = activeClient;
         activeClient = undefined;
         auth.onTrustedBrowserTakeover(browser.label ?? "Unknown browser");
-        previousActiveClient?.ws.close(TAKEOVER_CLOSE_CODE, "Session taken over by another browser");
+        previousActiveClient?.ws.close(SESSION_TAKEN_OVER_CLOSE_CODE, "Session taken over by another browser");
       }
 
       res.writeHead(303, {
@@ -794,12 +796,12 @@ export function startServer(
     }
 
     if (hasOtherActiveClient(browser.id)) {
-      ws.close(TAKEOVER_CLOSE_CODE, "Session already active in another browser");
+      ws.close(SESSION_ACTIVE_ELSEWHERE_CLOSE_CODE, "Session already active in another browser");
       return;
     }
 
     if (activeClient?.ws && activeClient.browserId === browser.id && activeClient.ws !== ws) {
-      activeClient.ws.close(TAKEOVER_CLOSE_CODE, "Session reopened on the same browser");
+      activeClient.ws.close(SESSION_REOPENED_CLOSE_CODE, "Session reopened on the same browser");
     }
     activeClient = {
       browserId: browser.id,
