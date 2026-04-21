@@ -18,6 +18,7 @@ import {
 import {
   getActiveSessionHtml,
   getApprovalBusyHtml,
+  getConnectBrowserHtml,
   getHtml,
   getPendingApprovalHtml,
   getReplaceSessionHtml,
@@ -33,6 +34,7 @@ const REQUEST_URL_BASE = "http://termi.local";
 const PENDING_APPROVAL_COOKIE = "__Host-termi_pending";
 const QUICK_SESSION_COOKIE = "__Host-termi_session";
 const PENDING_APPROVAL_TTL_MS = 5 * 60 * 1000;
+const QUICK_SESSION_TTL_SECONDS = 24 * 60 * 60;
 const TRUSTED_DEVICE_TTL_SECONDS = 30 * 24 * 60 * 60;
 const TAKEOVER_CLOSE_CODE = 4001;
 const APPROVAL_CODE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -220,7 +222,7 @@ export function startServer(
   function getAuthCookieMaxAgeSeconds(): number | undefined {
     return auth.mode === "trusted-browser"
       ? TRUSTED_DEVICE_TTL_SECONDS
-      : undefined;
+      : QUICK_SESSION_TTL_SECONDS;
   }
 
   function persistTrustedDevices(nextTrustedDevices: TrustedDevice[]): void {
@@ -546,36 +548,33 @@ export function startServer(
       const browser = getAuthenticatedBrowser(req);
       if (!browser) {
         const state = getUntrustedBrowserState(req);
-        const resolvedState = state.kind === "pair-available"
-          ? beginPendingApproval(req, "trust")
-          : state;
 
-        if (sendApprovalBlockedResponse(res, resolvedState)) {
+        if (sendApprovalBlockedResponse(res, state)) {
           return;
         }
 
-        if (resolvedState.kind === "replace-required") {
+        if (state.kind === "approval-pending") {
           res.writeHead(200, {
             "Content-Type": "text/html; charset=utf-8",
             "Cache-Control": "no-store",
-          });
-          res.end(getReplaceSessionHtml());
-          return;
-        }
-
-        if (resolvedState.kind === "approval-pending") {
-          res.writeHead(200, {
-            "Content-Type": "text/html; charset=utf-8",
-            "Cache-Control": "no-store",
-            "Set-Cookie": getPendingApprovalCookieHeader(resolvedState.request),
+            "Set-Cookie": getPendingApprovalCookieHeader(state.request),
           });
           res.end(getPendingApprovalHtml({
-            code: resolvedState.request.code,
-            expiresAt: resolvedState.request.expiresAt,
-            label: resolvedState.request.label,
+            code: state.request.code,
+            expiresAt: state.request.expiresAt,
+            label: state.request.label,
           }));
           return;
         }
+
+        res.writeHead(200, {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+        });
+        res.end(getConnectBrowserHtml({
+          mayReplaceActiveSession: state.kind === "replace-required",
+        }));
+        return;
       }
 
       if (hasOtherActiveClient(browser.id)) {

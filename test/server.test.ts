@@ -66,7 +66,7 @@ function extractCookie(setCookieHeader: string | null, cookieName: string): stri
   return match[1]!;
 }
 
-test("server serves health and auto-starts quick pairing by default", { skip: !runServerTests }, async () => {
+test("server serves health and shows an explicit connect page for unauthenticated browsers", { skip: !runServerTests }, async () => {
   const pty = new FakePty();
   let pendingApprovalActions:
     | {
@@ -95,8 +95,8 @@ test("server serves health and auto-starts quick pairing by default", { skip: !r
 
     const pairPage = await fetch(`http://127.0.0.1:${server.port}/`);
     assert.equal(pairPage.status, 200);
-    assert.match(await pairPage.text(), /Approve This Browser/);
-    assert.ok(pendingApprovalActions);
+    assert.match(await pairPage.text(), /Connect This Browser/);
+    assert.equal(pendingApprovalActions, undefined);
   } finally {
     server.close();
   }
@@ -131,11 +131,21 @@ test("quick mode approves a pending browser locally and then allows websocket ac
   try {
     const pairPage = await fetch(`http://127.0.0.1:${server.port}/`);
     assert.equal(pairPage.status, 200);
-    assert.match(await pairPage.text(), /Approve This Browser/);
+    assert.match(await pairPage.text(), /Connect This Browser/);
+    assert.equal(pendingApprovalActions, undefined);
+
+    const pairRequest = await fetch(`http://127.0.0.1:${server.port}/pair/request`, {
+      method: "POST",
+      headers: {
+        Origin: `http://127.0.0.1:${server.port}`,
+      },
+      redirect: "manual",
+    });
+    assert.equal(pairRequest.status, 303);
     assert.ok(pendingApprovalActions);
 
     const pendingCookie = extractCookie(
-      pairPage.headers.get("set-cookie"),
+      pairRequest.headers.get("set-cookie"),
       "__Host-termi_pending",
     );
 
@@ -148,7 +158,9 @@ test("quick mode approves a pending browser locally and then allows websocket ac
     assert.equal(statusResponse.status, 200);
     assert.deepEqual(await statusResponse.json(), { status: "approved" });
 
-    const cookie = extractCookie(statusResponse.headers.get("set-cookie"), "__Host-termi_session");
+    const setCookie = statusResponse.headers.get("set-cookie");
+    const cookie = extractCookie(setCookie, "__Host-termi_session");
+    assert.match(setCookie ?? "", /Max-Age=86400/);
 
     const pairedPage = await fetch(`http://127.0.0.1:${server.port}/`, {
       headers: {
@@ -225,11 +237,21 @@ test("persistent mode approves a pending browser locally and then allows websock
   try {
     const pairPage = await fetch(`http://127.0.0.1:${server.port}/`);
     assert.equal(pairPage.status, 200);
-    assert.match(await pairPage.text(), /Approve This Browser/);
+    assert.match(await pairPage.text(), /Connect This Browser/);
+    assert.equal(pendingApprovalActions, undefined);
+
+    const pairRequest = await fetch(`http://127.0.0.1:${server.port}/pair/request`, {
+      method: "POST",
+      headers: {
+        Origin: `http://127.0.0.1:${server.port}`,
+      },
+      redirect: "manual",
+    });
+    assert.equal(pairRequest.status, 303);
     assert.ok(pendingApprovalActions);
 
     const pendingCookie = extractCookie(
-      pairPage.headers.get("set-cookie"),
+      pairRequest.headers.get("set-cookie"),
       "__Host-termi_pending",
     );
 
@@ -319,7 +341,7 @@ test("persistent mode ignores malformed trusted-device cookies", { skip: !runSer
     });
 
     assert.equal(response.status, 200);
-    assert.match(await response.text(), /Approve This Browser/);
+    assert.match(await response.text(), /Connect This Browser/);
   } finally {
     server.close();
   }
@@ -419,7 +441,8 @@ test("quick mode requires explicit replacement before a second browser can pair 
     const blockedPage = await fetch(`http://127.0.0.1:${server.port}/`);
     const blockedHtml = await blockedPage.text();
     assert.equal(blockedPage.status, 200);
-    assert.match(blockedHtml, /Pair This Browser Instead/);
+    assert.match(blockedHtml, /Connect This Browser/);
+    assert.match(blockedHtml, /replacing it/);
     assert.equal(pendingApprovalActions, undefined);
 
     const replaceRequest = await fetch(`http://127.0.0.1:${server.port}/pair/request`, {
@@ -467,7 +490,7 @@ test("quick mode requires explicit replacement before a second browser can pair 
       },
     });
     assert.equal(oldCookiePage.status, 200);
-    assert.match(await oldCookiePage.text(), /Approve This Browser/);
+    assert.match(await oldCookiePage.text(), /Connect This Browser/);
   } finally {
     server.close();
   }
@@ -511,7 +534,8 @@ test("untrusted browsers must explicitly request replacement before pairing over
     const blockedPage = await fetch(`http://127.0.0.1:${server.port}/`);
     const blockedHtml = await blockedPage.text();
     assert.equal(blockedPage.status, 200);
-    assert.match(blockedHtml, /Pair This Browser Instead/);
+    assert.match(blockedHtml, /Connect This Browser/);
+    assert.match(blockedHtml, /replacing it/);
     assert.doesNotMatch(blockedHtml, /First phone/);
     assert.equal(pendingApprovalActions, undefined);
 
