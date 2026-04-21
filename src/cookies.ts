@@ -33,7 +33,8 @@ export function serializeCookie(name: string, value: string, maxAgeSeconds?: num
   ];
 
   if (maxAgeSeconds !== undefined) {
-    parts.splice(2, 0, `Max-Age=${maxAgeSeconds}`);
+    const expiresAt = new Date(Date.now() + (maxAgeSeconds * 1000)).toUTCString();
+    parts.splice(2, 0, `Max-Age=${maxAgeSeconds}`, `Expires=${expiresAt}`);
   }
 
   return parts.join("; ");

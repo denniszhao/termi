@@ -138,6 +138,20 @@ export function getApprovalBusyHtml(message: string): string {
   `);
 }
 
+export function getConnectBrowserHtml(options: { mayReplaceActiveSession: boolean }): string {
+  return pairingPageHtml("Connect This Browser", `
+    <h1>Connect This Browser</h1>
+    <p>This browser is not currently connected to the active Termi session.</p>
+    <p>${options.mayReplaceActiveSession
+      ? "If another browser is active, continuing will ask for local approval before replacing it."
+      : "Continuing will ask for local approval on the device running Termi."}
+    </p>
+    <form method="post" action="/pair/request">
+      <button type="submit">Connect This Browser</button>
+    </form>
+  `, BUTTON_CSS_GREEN);
+}
+
 export function getReplaceSessionHtml(): string {
   return pairingPageHtml("Pair This Browser Instead", `
     <h1>Session Already Active</h1>
