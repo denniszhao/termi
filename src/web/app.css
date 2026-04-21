@@ -28,6 +28,30 @@ body {
   height: 100dvh;
 }
 
+#terminal-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#connection-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(7, 10, 18, 0.55);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 180ms ease;
+  z-index: 30;
+}
+
+#app-shell[data-connection-state="connecting"] #connection-overlay,
+#app-shell[data-connection-state="reconnecting"] #connection-overlay,
+#app-shell[data-connection-state="disconnected"] #connection-overlay {
+  opacity: 1;
+}
+
 #terminal {
   width: 100%;
   flex: 1;

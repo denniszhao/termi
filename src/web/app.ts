@@ -138,6 +138,7 @@ socket = createTerminalSocket({
   },
   onStateChange: (state) => {
     status.setState(state);
+    appShellEl.dataset.connectionState = state;
   },
 });
 
