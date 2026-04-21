@@ -654,6 +654,24 @@ test("trusted browsers require an explicit takeover when another trusted browser
     assert.equal(closeCode, 4001);
     assert.deepEqual(takeoverLabels, ["Second phone"]);
 
+    const secondWs = new WebSocket(`ws://127.0.0.1:${server.port}/`, {
+      headers: {
+        Cookie: `__Host-termi_trust=${second.cookieValue}`,
+        Origin: `http://127.0.0.1:${server.port}`,
+      },
+    });
+    await once(secondWs, "open");
+
+    const displacedWs = new WebSocket(`ws://127.0.0.1:${server.port}/`, {
+      headers: {
+        Cookie: `__Host-termi_trust=${first.cookieValue}`,
+        Origin: `http://127.0.0.1:${server.port}`,
+      },
+    });
+    displacedWs.on("error", () => {});
+    const [displacedCloseCode] = await once(displacedWs, "close");
+    assert.equal(displacedCloseCode, 4001);
+
     const secondPage = await fetch(`http://127.0.0.1:${server.port}/`, {
       headers: {
         Cookie: `__Host-termi_trust=${second.cookieValue}`,
@@ -661,6 +679,7 @@ test("trusted browsers require an explicit takeover when another trusted browser
     });
     assert.equal(secondPage.status, 200);
     assert.match(await secondPage.text(), /<title>Termi<\/title>/);
+    secondWs.close();
   } finally {
     server.close();
   }
