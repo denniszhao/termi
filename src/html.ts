@@ -29,7 +29,10 @@ export function getHtml(options: HtmlOptions): string {
     <div id="terminal-brand">
       <span id="terminal-brand-logo">🍉</span><span id="terminal-brand-wordmark">termi</span><span id="status"><span id="status-dot"></span><span id="status-text">Connecting</span></span>
     </div>
-    <div id="terminal"></div>
+    <div id="terminal-wrap">
+      <div id="terminal"></div>
+      <div id="connection-overlay" aria-hidden="true"></div>
+    </div>
     <div id="keyboard"></div>
   </div>
   <div id="mobile-actions">
